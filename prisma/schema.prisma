@@ -86,6 +86,7 @@ model Tenant {
   orders            Order[]
   products          Product[]
   customEvents      CustomEvent[]
+  syncLogs          SyncLog[]
 
   @@map("tenants")
 }
@@ -200,4 +201,21 @@ model CustomEvent {
   customer    Customer? @relation(fields: [customerId], references: [id])
 
   @@map("custom_events")
+}
+
+model SyncLog {
+  id                String    @id @default(cuid())
+  tenantId          String
+  syncType          String    // orders, customers, products, analytics
+  success           Boolean
+  recordsProcessed  Int       @default(0)
+  duration          Int       // milliseconds
+  error             String?   @db.Text
+  createdAt         DateTime  @default(now())
+  
+  // Relations
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, syncType, createdAt])
+  @@map("sync_logs")
 }

@@ -17,7 +17,7 @@ interface RevenueTrendsProps {
 }
 
 export function RevenueTrends({ data, className }: RevenueTrendsProps) {
-  const formatCurrency = (value: number) => `$${value.toFixed(2)}`
+  const formatCurrency = (value: number) => `₹${value.toFixed(2)}`
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return `${date.getMonth() + 1}/${date.getDate()}`

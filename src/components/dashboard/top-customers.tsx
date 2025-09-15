@@ -47,7 +47,7 @@ export function TopCustomers({ customers }: TopCustomersProps) {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-medium">
-                    ${totalSpent.toFixed(2)}
+                    ₹{totalSpent.toFixed(2)}
                   </p>
                   <p className="text-sm text-muted-foreground">
                     {ordersCount} orders

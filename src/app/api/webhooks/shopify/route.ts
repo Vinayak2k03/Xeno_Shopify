@@ -3,29 +3,102 @@ import { prisma } from '@/lib/db'
 import { ShopifyService } from '@/services/shopify'
 import crypto from 'crypto'
 
+// Rate limiting for webhook requests
+const requestCounts = new Map<string, { count: number; resetTime: number }>()
+const RATE_LIMIT_WINDOW = 60 * 1000 // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 100 // Max 100 requests per minute per domain
+
+function checkRateLimit(domain: string): boolean {
+  const now = Date.now()
+  const key = domain
+  const current = requestCounts.get(key)
+
+  if (!current || now > current.resetTime) {
+    requestCounts.set(key, { count: 1, resetTime: now + RATE_LIMIT_WINDOW })
+    return true
+  }
+
+  if (current.count >= RATE_LIMIT_MAX_REQUESTS) {
+    return false
+  }
+
+  current.count++
+  return true
+}
+
 function verifyWebhook(body: string, signature: string, secret: string): boolean {
-  const hmac = crypto.createHmac('sha256', secret)
-  hmac.update(body, 'utf8')
-  const calculatedSignature = hmac.digest('base64')
-  
-  return crypto.timingSafeEqual(
-    Buffer.from(signature, 'base64'),
-    Buffer.from(calculatedSignature, 'base64')
-  )
+  try {
+    const hmac = crypto.createHmac('sha256', secret)
+    hmac.update(body, 'utf8')
+    const calculatedSignature = hmac.digest('base64')
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(signature, 'base64'),
+      Buffer.from(calculatedSignature, 'base64')
+    )
+  } catch (error) {
+    console.error('Error verifying webhook signature:', error)
+    return false
+  }
+}
+
+async function logWebhookRequest(
+  tenantId: string,
+  topic: string,
+  success: boolean,
+  processingTime: number,
+  error?: string
+) {
+  try {
+    await prisma.syncLog.create({
+      data: {
+        tenantId,
+        syncType: `webhook_${topic.replace('/', '_')}`,
+        success,
+        recordsProcessed: success ? 1 : 0,
+        duration: processingTime,
+        error,
+        createdAt: new Date()
+      }
+    })
+  } catch (logError) {
+    console.error('Failed to log webhook request:', logError)
+  }
 }
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now()
+  let tenantId: string | undefined
+  let topic: string | null = null
+
   try {
+    // Extract headers
     const signature = request.headers.get('x-shopify-hmac-sha256')
-    const topic = request.headers.get('x-shopify-topic')
+    topic = request.headers.get('x-shopify-topic')
     const shopDomain = request.headers.get('x-shopify-shop-domain')
+    const apiVersion = request.headers.get('x-shopify-api-version')
+    const webhookId = request.headers.get('x-shopify-webhook-id')
     
+    // Validate required headers
     if (!signature || !topic || !shopDomain) {
+      console.error('Missing required headers:', { signature: !!signature, topic, shopDomain })
       return NextResponse.json({ error: 'Missing required headers' }, { status: 400 })
     }
 
+    // Rate limiting
+    if (!checkRateLimit(shopDomain)) {
+      console.warn(`Rate limit exceeded for domain: ${shopDomain}`)
+      return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
+    }
+
+    // Get request body
     const body = await request.text()
     
+    // Basic body validation
+    if (!body || body.length === 0) {
+      return NextResponse.json({ error: 'Empty request body' }, { status: 400 })
+    }
+
     // Find tenant by shop domain
     const tenant = await prisma.tenant.findUnique({
       where: {
@@ -34,18 +107,36 @@ export async function POST(request: NextRequest) {
     })
 
     if (!tenant) {
+      console.error(`Tenant not found for domain: ${shopDomain}`)
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
     }
 
-    // Verify webhook signature
+    tenantId = tenant.id
+
+    // Verify webhook signature if secret is configured
     if (tenant.webhookSecret) {
       const isValid = verifyWebhook(body, signature, tenant.webhookSecret)
       if (!isValid) {
+        console.error(`Invalid webhook signature for tenant: ${tenant.name}`)
+        await logWebhookRequest(tenant.id, topic, false, Date.now() - startTime, 'Invalid signature')
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
       }
+    } else {
+      console.warn(`No webhook secret configured for tenant: ${tenant.name}`)
     }
 
-    const payload = JSON.parse(body)
+    // Parse payload
+    let payload
+    try {
+      payload = JSON.parse(body)
+    } catch (parseError) {
+      console.error('Failed to parse webhook payload:', parseError)
+      await logWebhookRequest(tenant.id, topic, false, Date.now() - startTime, 'Invalid JSON payload')
+      return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 })
+    }
+
+    // Log webhook request details for debugging
+    console.log(`📨 Webhook received: ${topic} for ${shopDomain} (ID: ${webhookId}, API: ${apiVersion})`)
 
     // Initialize Shopify service
     const shopifyService = new ShopifyService({
@@ -56,170 +147,117 @@ export async function POST(request: NextRequest) {
       webhookSecret: tenant.webhookSecret || undefined
     }, tenant.id)
 
-    // Handle different webhook topics
-    switch (topic) {
-      case 'customers/create':
-      case 'customers/update':
-        await handleCustomerWebhook(payload, tenant.id)
-        break
-        
-      case 'orders/create':
-      case 'orders/updated':
-      case 'orders/paid':
-        await handleOrderWebhook(payload, tenant.id)
-        break
-        
-      case 'products/create':
-      case 'products/update':
-        await handleProductWebhook(payload, tenant.id)
-        break
-        
-      case 'carts/create':
-      case 'carts/update':
-        await handleCartWebhook(payload, tenant.id, topic)
-        break
-        
-      case 'checkouts/create':
-      case 'checkouts/update':
-        await handleCheckoutWebhook(payload, tenant.id, topic)
-        break
-        
-      default:
-        console.log(`Unhandled webhook topic: ${topic}`)
-    }
+    // Handle different webhook topics with error isolation
+    try {
+      switch (topic) {
+        case 'customers/create':
+        case 'customers/update':
+          await handleCustomerWebhook(payload, tenant.id, shopifyService)
+          break
+          
+        case 'orders/create':
+        case 'orders/updated':
+        case 'orders/paid':
+        case 'orders/cancelled':
+          await handleOrderWebhook(payload, tenant.id, shopifyService)
+          break
+          
+        case 'products/create':
+        case 'products/update':
+          await handleProductWebhook(payload, tenant.id, shopifyService)
+          break
+          
+        case 'carts/create':
+        case 'carts/update':
+          await handleCartWebhook(payload, tenant.id, topic)
+          break
+          
+        case 'checkouts/create':
+        case 'checkouts/update':
+          await handleCheckoutWebhook(payload, tenant.id, topic)
+          break
+          
+        default:
+          console.log(`⚠️ Unhandled webhook topic: ${topic}`)
+          // Still log as successful since we received it properly
+      }
 
-    return NextResponse.json({ success: true })
+      // Log successful processing
+      const processingTime = Date.now() - startTime
+      await logWebhookRequest(tenant.id, topic, true, processingTime)
+      
+      console.log(`✅ Webhook ${topic} processed successfully for ${shopDomain} in ${processingTime}ms`)
+      
+      return NextResponse.json({ 
+        success: true, 
+        processed: topic,
+        processingTime: processingTime
+      })
+
+    } catch (handlerError) {
+      // Log handler-specific errors
+      const processingTime = Date.now() - startTime
+      const errorMessage = handlerError instanceof Error ? handlerError.message : 'Unknown handler error'
+      
+      await logWebhookRequest(tenant.id, topic, false, processingTime, errorMessage)
+      
+      console.error(`❌ Error handling webhook ${topic} for ${shopDomain}:`, handlerError)
+      
+      // Return success to Shopify to prevent retries for application errors
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Processing error',
+        topic,
+        processingTime
+      }, { status: 200 })
+    }
 
   } catch (error) {
-    console.error('Webhook error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    // Log general errors
+    const processingTime = Date.now() - startTime
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    
+    if (tenantId && topic) {
+      await logWebhookRequest(tenantId, topic, false, processingTime, errorMessage)
+    }
+    
+    console.error('❌ General webhook error:', error)
+    
+    return NextResponse.json({ 
+      error: 'Internal server error',
+      processingTime
+    }, { status: 500 })
   }
 }
 
-async function handleCustomerWebhook(customer: any, tenantId: string) {
-  await prisma.customer.upsert({
-    where: {
-      shopifyId_tenantId: {
-        shopifyId: customer.id.toString(),
-        tenantId
-      }
-    },
-    update: {
-      email: customer.email,
-      firstName: customer.first_name,
-      lastName: customer.last_name,
-      phone: customer.phone,
-      totalSpent: parseFloat(customer.total_spent || '0'),
-      ordersCount: customer.orders_count || 0,
-      tags: customer.tags ? customer.tags.split(', ') : [],
-      acceptsMarketing: customer.accepts_marketing || false,
-      updatedAt: new Date()
-    },
-    create: {
-      shopifyId: customer.id.toString(),
-      tenantId,
-      email: customer.email,
-      firstName: customer.first_name,
-      lastName: customer.last_name,
-      phone: customer.phone,
-      totalSpent: parseFloat(customer.total_spent || '0'),
-      ordersCount: customer.orders_count || 0,
-      tags: customer.tags ? customer.tags.split(', ') : [],
-      acceptsMarketing: customer.accepts_marketing || false
-    }
-  })
-}
-
-async function handleOrderWebhook(order: any, tenantId: string) {
-  // First, ensure customer exists
-  let customer = null
-  if (order.customer?.id) {
-    customer = await prisma.customer.findUnique({
-      where: {
-        shopifyId_tenantId: {
-          shopifyId: order.customer.id.toString(),
-          tenantId
-        }
-      }
-    })
+async function handleCustomerWebhook(customer: any, tenantId: string, shopifyService: ShopifyService) {
+  try {
+    await shopifyService.syncCustomerFromWebhook(customer)
+    console.log(`👤 Customer ${customer.id} synced successfully`)
+  } catch (error) {
+    console.error(`❌ Error syncing customer ${customer.id}:`, error)
+    throw error
   }
-
-  await prisma.order.upsert({
-    where: {
-      shopifyId_tenantId: {
-        shopifyId: order.id.toString(),
-        tenantId
-      }
-    },
-    update: {
-      orderNumber: order.order_number?.toString() || order.name,
-      email: order.email,
-      totalPrice: parseFloat(order.total_price),
-      subtotalPrice: parseFloat(order.subtotal_price || '0'),
-      totalTax: parseFloat(order.total_tax || '0'),
-      currency: order.currency,
-      financialStatus: order.financial_status,
-      fulfillmentStatus: order.fulfillment_status,
-      tags: order.tags ? order.tags.split(', ') : [],
-      note: order.note,
-      processedAt: order.processed_at ? new Date(order.processed_at) : null,
-      cancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
-      updatedAt: new Date()
-    },
-    create: {
-      shopifyId: order.id.toString(),
-      tenantId,
-      customerId: customer?.id,
-      orderNumber: order.order_number?.toString() || order.name,
-      email: order.email,
-      totalPrice: parseFloat(order.total_price),
-      subtotalPrice: parseFloat(order.subtotal_price || '0'),
-      totalTax: parseFloat(order.total_tax || '0'),
-      currency: order.currency,
-      financialStatus: order.financial_status,
-      fulfillmentStatus: order.fulfillment_status,
-      tags: order.tags ? order.tags.split(', ') : [],
-      note: order.note,
-      processedAt: order.processed_at ? new Date(order.processed_at) : null,
-      cancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null
-    }
-  })
 }
 
-async function handleProductWebhook(product: any, tenantId: string) {
-  await prisma.product.upsert({
-    where: {
-      shopifyId_tenantId: {
-        shopifyId: product.id.toString(),
-        tenantId
-      }
-    },
-    update: {
-      title: product.title,
-      handle: product.handle,
-      description: product.body_html,
-      vendor: product.vendor,
-      productType: product.product_type,
-      tags: product.tags ? product.tags.split(', ') : [],
-      status: product.status,
-      images: product.images || [],
-      variants: product.variants || [],
-      updatedAt: new Date()
-    },
-    create: {
-      shopifyId: product.id.toString(),
-      tenantId,
-      title: product.title,
-      handle: product.handle,
-      description: product.body_html,
-      vendor: product.vendor,
-      productType: product.product_type,
-      tags: product.tags ? product.tags.split(', ') : [],
-      status: product.status,
-      images: product.images || [],
-      variants: product.variants || []
-    }
-  })
+async function handleOrderWebhook(order: any, tenantId: string, shopifyService: ShopifyService) {
+  try {
+    await shopifyService.syncOrderFromWebhook(order)
+    console.log(`📦 Order ${order.id} synced successfully`)
+  } catch (error) {
+    console.error(`❌ Error syncing order ${order.id}:`, error)
+    throw error
+  }
+}
+
+async function handleProductWebhook(product: any, tenantId: string, shopifyService: ShopifyService) {
+  try {
+    await shopifyService.syncProductFromWebhook(product)
+    console.log(`🛍️ Product ${product.id} synced successfully`)
+  } catch (error) {
+    console.error(`❌ Error syncing product ${product.id}:`, error)
+    throw error
+  }
 }
 
 async function handleCartWebhook(cart: any, tenantId: string, topic: string) {
@@ -395,7 +433,7 @@ async function detectCartAbandonment(cart: any, tenantId: string, customerId: st
       }
     });
 
-    console.log(`🛒💔 Cart ${cart.id} marked as abandoned (value: $${cart.total_price})`);
+    console.log(`🛒💔 Cart ${cart.id} marked as abandoned (value: ₹${cart.total_price})`);
   } catch (error) {
     console.error(`❌ Error detecting cart abandonment for cart ${cart.id}:`, error);
   }

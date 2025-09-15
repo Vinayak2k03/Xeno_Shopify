@@ -227,7 +227,7 @@ export function CustomEventsOverview({ events, className }: CustomEventsProps) {
                 </div>
                 <div className="text-right">
                   {event.eventData?.cartValue && (
-                    <p className="text-sm font-medium">${Number(event.eventData.cartValue).toFixed(2)}</p>
+                    <p className="text-sm font-medium">₹{Number(event.eventData.cartValue).toFixed(2)}</p>
                   )}
                   {event.eventData?.itemCount && (
                     <p className="text-xs text-muted-foreground">{event.eventData.itemCount} items</p>

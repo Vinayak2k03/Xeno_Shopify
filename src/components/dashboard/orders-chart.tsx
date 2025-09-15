@@ -34,7 +34,7 @@ export function OrdersByDateChart({ data }: OrdersByDateProps) {
             <Tooltip 
               labelFormatter={(value) => `Date: ${value}`}
               formatter={(value: any, name: string) => [
-                name === 'orders' ? value : `$${value.toFixed(2)}`,
+                name === 'orders' ? value : `₹${value.toFixed(2)}`,
                 name === 'orders' ? 'Orders' : 'Revenue'
               ]}
             />
