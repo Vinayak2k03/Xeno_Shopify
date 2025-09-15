@@ -82,7 +82,7 @@ async function getSyncMetrics(tenantId: string, startDate: Date) {
   })
 
   // Group by sync type
-  const byType = {}
+      const byType: Record<string, any> = {}
   const syncTypes = ['orders', 'customers', 'products', 'analytics']
 
   for (const type of syncTypes) {
@@ -161,7 +161,7 @@ async function getWebhookMetrics(tenantId: string, startDate: Date) {
   }
 
   // Group by webhook topic
-  const byTopic = {}
+      const byTopic: Record<string, any> = {}
   webhookLogs.forEach(log => {
     const topic = log.syncType.replace('webhook_', '').replace('_', '/')
     if (!byTopic[topic]) {
@@ -299,7 +299,7 @@ async function getPerformanceMetrics(tenantId: string, startDate: Date) {
   const efficiency = totalRecords / (syncLogs.reduce((sum, l) => sum + l.duration, 0) / 1000) // records per second
 
   // Get sync frequency analysis
-  const syncFrequency = {}
+      const syncFrequency: Record<string, Date[]> = {}
   syncLogs.forEach(log => {
     if (!syncFrequency[log.syncType]) {
       syncFrequency[log.syncType] = []
@@ -308,7 +308,7 @@ async function getPerformanceMetrics(tenantId: string, startDate: Date) {
   })
 
   // Calculate average time between syncs for each type
-  const avgFrequency = {}
+  const avgFrequency: Record<string, number> = {}
   Object.keys(syncFrequency).forEach(type => {
     const times = syncFrequency[type].sort((a, b) => a.getTime() - b.getTime())
     if (times.length > 1) {

@@ -15,9 +15,9 @@ export interface JWTPayload {
 export class JWTService {
   // Generate JWT token
   static generateToken(payload: Omit<JWTPayload, 'iat' | 'exp'>): string {
-    return jwt.sign(payload, JWT_SECRET, {
+    return jwt.sign(payload, JWT_SECRET as string, {
       expiresIn: JWT_EXPIRES_IN,
-    })
+    } as jwt.SignOptions)
   }
 
   // Verify JWT token

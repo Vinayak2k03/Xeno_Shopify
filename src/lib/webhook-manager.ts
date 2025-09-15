@@ -7,8 +7,8 @@ interface WebhookRegistrationResult {
   success: boolean
   webhooks: Array<{
     topic: string
-    status: 'created' | 'exists' | 'failed'
-    id?: string
+    status: 'created' | 'exists' | 'failed' | 'deleted'
+    id?: string | number
     error?: string
   }>
   error?: string
@@ -87,7 +87,12 @@ export class WebhookManager {
         tenantId: tenant.id,
         tenantName: tenant.name,
         success: true,
-        webhooks: webhookResults
+        webhooks: webhookResults.map(r => ({
+          topic: r.topic,
+          status: r.status as 'created' | 'exists' | 'failed',
+          id: r.id?.toString(),
+          error: r.error
+        }))
       }
     } catch (error) {
       console.error(`Error registering webhooks for tenant ${tenant.name}:`, error)
@@ -166,7 +171,12 @@ export class WebhookManager {
         tenantId: tenant.id,
         tenantName: tenant.name,
         success: true,
-        webhooks: webhookResults
+        webhooks: webhookResults.map(r => ({
+          topic: r.topic,
+          status: r.status as 'created' | 'exists' | 'failed' | 'deleted',
+          id: r.id,
+          error: r.error
+        }))
       }
     } catch (error) {
       console.error(`Error updating webhooks for tenant ${tenant.name}:`, error)
@@ -316,7 +326,7 @@ export class WebhookManager {
         details.push({
           tenantId: tenant.id,
           tenantName: tenant.name,
-          status: isHealthy ? 'healthy' : 'unhealthy',
+          status: isHealthy ? 'healthy' as const : 'unhealthy' as const,
           webhookCount: status.ourWebhooks,
           issues: issues.length > 0 ? issues : undefined
         })
@@ -326,7 +336,7 @@ export class WebhookManager {
         details.push({
           tenantId: tenant.id,
           tenantName: tenant.name,
-          status: 'unhealthy',
+          status: 'unhealthy' as const,
           webhookCount: 0,
           issues: [`Error checking webhooks: ${error instanceof Error ? error.message : 'Unknown error'}`]
         })

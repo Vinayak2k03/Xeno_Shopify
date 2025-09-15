@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
     })
 
     // Group by sync type and get latest status
-    const syncStatus = {}
+    const syncStatus: Record<string, any> = {}
     const syncTypes = ['orders', 'customers', 'products', 'analytics']
 
     for (const type of syncTypes) {

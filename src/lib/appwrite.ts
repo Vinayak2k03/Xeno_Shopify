@@ -48,7 +48,7 @@ export class AuthService {
       return {
         id: user.id,
         email: user.email,
-        name: user.name,
+        name: user.name || user.email.split('@')[0],
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       }
@@ -89,7 +89,7 @@ export class AuthService {
       const token = JWTService.generateToken({
         userId: user.id,
         email: user.email,
-        name: user.name,
+        name: user.name || user.email.split('@')[0],
       })
 
       console.log('Sign in successful for:', email)
@@ -104,7 +104,7 @@ export class AuthService {
         user: {
           id: user.id,
           email: user.email,
-          name: user.name,
+          name: user.name || user.email.split('@')[0],
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
@@ -148,7 +148,7 @@ export class AuthService {
       return {
         id: user.id,
         email: user.email,
-        name: user.name,
+        name: user.name || user.email.split('@')[0],
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       }
@@ -245,7 +245,7 @@ export class AuthService {
       return {
         id: updatedUser.id,
         email: updatedUser.email,
-        name: updatedUser.name,
+        name: updatedUser.name || updatedUser.email.split('@')[0],
         createdAt: updatedUser.createdAt,
         updatedAt: updatedUser.updatedAt,
       }

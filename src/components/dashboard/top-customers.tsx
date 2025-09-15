@@ -26,11 +26,11 @@ export function TopCustomers({ customers }: TopCustomersProps) {
             // Ensure totalSpent and ordersCount are numbers
             const totalSpent = typeof customer.totalSpent === 'number' 
               ? customer.totalSpent 
-              : parseFloat(customer.totalSpent.toString()) || 0
+              : parseFloat(String(customer.totalSpent)) || 0
             
             const ordersCount = typeof customer.ordersCount === 'number' 
               ? customer.ordersCount 
-              : parseInt(customer.ordersCount.toString()) || 0
+              : parseInt(String(customer.ordersCount)) || 0
 
             return (
               <div key={customer.id} className="flex items-center">

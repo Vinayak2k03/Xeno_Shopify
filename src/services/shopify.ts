@@ -354,7 +354,11 @@ export class ShopifyService {
           console.log(`Webhook for ${webhook.topic} already exists`)
           results.push({ topic: webhook.topic, status: 'exists', id: existing.id })
         } else {
-          const created = await this.shopify.webhook.create(webhook)
+          const created = await this.shopify.webhook.create({
+            topic: webhook.topic as any,
+            address: webhook.address,
+            format: webhook.format as any
+          })
           console.log(`Webhook for ${webhook.topic} created successfully`)
           results.push({ topic: webhook.topic, status: 'created', id: created.id })
         }
@@ -490,13 +494,13 @@ export class ShopifyService {
       
       try {
         for (const customerId of batch) {
-          const customer = await this.shopify.customer.get(customerId)
+          const customer = await this.shopify.customer.get(parseInt(customerId))
           await this.upsertCustomer(customer)
           results.push({ id: customerId, success: true })
         }
       } catch (error) {
         console.error(`Error syncing customer batch:`, error)
-        batch.forEach(id => results.push({ id, success: false, error: error.message }))
+        batch.forEach(id => results.push({ id, success: false, error: error instanceof Error ? error.message : 'Unknown error' }))
       }
 
       // Small delay between batches
@@ -517,13 +521,13 @@ export class ShopifyService {
       
       try {
         for (const orderId of batch) {
-          const order = await this.shopify.order.get(orderId)
+          const order = await this.shopify.order.get(parseInt(orderId))
           await this.upsertOrder(order)
           results.push({ id: orderId, success: true })
         }
       } catch (error) {
         console.error(`Error syncing order batch:`, error)
-        batch.forEach(id => results.push({ id, success: false, error: error.message }))
+        batch.forEach(id => results.push({ id, success: false, error: error instanceof Error ? error.message : 'Unknown error' }))
       }
 
       // Small delay between batches

@@ -428,8 +428,12 @@ export default function Dashboard() {
 
                   {/* Charts and Tables */}
                   <div className="grid gap-6 md:grid-cols-12">
-                    <OrdersByDateChart data={metrics.ordersByDate} className="md:col-span-8" />
-                    <TopCustomers customers={metrics.topCustomers} className="md:col-span-4" />
+                    <div className="md:col-span-8">
+                      <OrdersByDateChart data={metrics.ordersByDate} />
+                    </div>
+                    <div className="md:col-span-4">
+                      <TopCustomers customers={metrics.topCustomers} />
+                    </div>
                   </div>
 
                   {/* Top Products */}
@@ -448,10 +452,8 @@ export default function Dashboard() {
                   <SyncManager 
                     tenantId={selectedTenant}
                     onSyncComplete={() => {
-                      // Refresh analytics data if we're on analytics tab
-                      if (activeTab === 'analytics') {
-                        fetchMetrics(true);
-                      }
+                      // Always refresh analytics data after sync
+                      fetchMetrics(true);
                     }}
                   />
                   <WebhookManager tenantId={selectedTenant} />

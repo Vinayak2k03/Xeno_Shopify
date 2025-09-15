@@ -157,7 +157,7 @@ export function CustomEventsOverview({ events, className }: CustomEventsProps) {
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="count"
-                  label={({ eventType, count }) => `${eventType}: ${count}`}
+                  label={(entry: any) => `${entry.eventType}: ${entry.count}`}
                 >
                   {eventTypeData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />

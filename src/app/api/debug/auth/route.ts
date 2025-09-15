@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAppwriteUser } from '@/lib/auth-middleware'
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,25 +21,23 @@ export async function GET(request: NextRequest) {
       }
     })
     
-    // Try to get user
-    const user = await getAppwriteUser(request)
+    // Get JWT token from cookie
+    const token = request.cookies.get('authToken')?.value
     
     return NextResponse.json({ 
-      success: !!user,
-      user: user ? { 
-        id: user.$id, 
-        email: user.email, 
-        name: user.name 
-      } : null,
+      success: !!token,
+      hasToken: !!token,
       cookieCount: cookies.length,
-      appwriteProjectId: process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID,
-      appwriteEndpoint: process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT
+      headers: Object.fromEntries(request.headers.entries())
     })
   } catch (error) {
     console.error('Debug auth error:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    const errorStack = error instanceof Error ? error.stack : undefined
+    
     return NextResponse.json({ 
-      error: error.message,
-      stack: error.stack 
+      error: errorMessage,
+      stack: errorStack 
     }, { status: 500 })
   }
 }

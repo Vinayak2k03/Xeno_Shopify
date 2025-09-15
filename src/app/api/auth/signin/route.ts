@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     const token = JWTService.generateToken({
       userId: user.id,
       email: user.email,
-      name: user.name,
+      name: user.name || user.email.split('@')[0],
     })
 
     console.log('Sign in successful for:', email)
