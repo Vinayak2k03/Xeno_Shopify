@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { OrdersByDateChart } from "@/components/dashboard/orders-chart";
 import { TopCustomers } from "@/components/dashboard/top-customers";
+import { TopProducts } from "@/components/dashboard/top-products";
+import { RevenueTrends } from "@/components/dashboard/revenue-trends";
+import { DateRangeFilter } from "@/components/dashboard/date-range-filter";
+import { CustomEventsOverview } from "@/components/dashboard/custom-events";
 import { cn } from "@/lib/utils";
 
 // Import wireframe components
@@ -46,6 +50,27 @@ interface DashboardMetrics {
     totalSpent: number;
     ordersCount: number;
   }>;
+  topProducts: Array<{
+    id: string;
+    title: string;
+    revenue: number;
+    unitsSold: number;
+    averagePrice: number;
+  }>;
+  revenueTrends: Array<{
+    date: string;
+    revenue: number;
+    orders: number;
+    customers: number;
+    averageOrderValue: number;
+  }>;
+  customEvents: Array<{
+    id: string;
+    eventType: string;
+    eventData: any;
+    createdAt: string;
+    customerId?: string;
+  }>;
 }
 
 export default function Dashboard() {
@@ -57,6 +82,26 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [tenantsLoading, setTenantsLoading] = useState(true);
+  
+  // Use a ref to prevent multiple simultaneous API calls
+  const fetchingRef = useRef(false);
+  
+  // Initialize with default date range (last 30 days)
+  const getDefaultDates = () => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 30);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  };
+
+  const [startDate, setStartDate] = useState(() => getDefaultDates().start);
+  const [endDate, setEndDate] = useState(() => getDefaultDates().end);
+
+  // Memoize the date range to prevent unnecessary re-renders
+  const dateRange = useMemo(() => ({ start: startDate, end: endDate }), [startDate, endDate]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -65,13 +110,81 @@ export default function Dashboard() {
       return;
     }
     fetchTenants();
-  }, [user, authLoading]);
+  }, [user, authLoading, router]);
 
+  // Clear metrics when tenant changes to show loading state immediately
   useEffect(() => {
     if (selectedTenant) {
-      fetchMetrics();
+      setMetrics(null); // Clear previous metrics to show loading state
     }
   }, [selectedTenant]);
+
+  // Use refs to track the last fetched parameters to avoid unnecessary refetches
+  const lastFetchParamsRef = useRef<{tenantId: string, startDate: string, endDate: string} | null>(null);
+
+  const fetchMetrics = useCallback(async (forceRefetch = false) => {
+    if (!selectedTenant) return;
+
+    // Check if we already have data for these exact parameters
+    const currentParams = { tenantId: selectedTenant, startDate, endDate };
+    if (!forceRefetch && lastFetchParamsRef.current && 
+        lastFetchParamsRef.current.tenantId === currentParams.tenantId &&
+        lastFetchParamsRef.current.startDate === currentParams.startDate &&
+        lastFetchParamsRef.current.endDate === currentParams.endDate) {
+      console.log('Skipping fetch - data already loaded for these parameters:', currentParams);
+      return;
+    }
+
+    if (fetchingRef.current) {
+      console.log('Skipping fetch - already in progress');
+      return;
+    }
+
+    fetchingRef.current = true;
+    setLoading(true);
+    
+    try {
+      let url = `/api/dashboard/metrics?tenantId=${selectedTenant}`;
+      if (startDate && endDate) {
+        url += `&startDate=${startDate}&endDate=${endDate}`;
+      }
+      
+      console.log('Fetching metrics:', currentParams);
+      
+      const response = await api.get(url);
+      if (response.ok) {
+        const data = await response.json();
+        setMetrics(data);
+        lastFetchParamsRef.current = currentParams; // Cache the successful fetch parameters
+        console.log('Metrics fetched successfully');
+      } else {
+        console.error("Failed to fetch metrics:", await response.text());
+      }
+    } catch (error) {
+      console.error("Error fetching metrics:", error);
+    } finally {
+      setLoading(false);
+      fetchingRef.current = false;
+    }
+  }, [selectedTenant, startDate, endDate]);
+
+  // Single useEffect to handle metrics fetching with proper debouncing and caching
+  useEffect(() => {
+    if (!selectedTenant) return;
+
+    // Clear cache when tenant changes
+    if (lastFetchParamsRef.current && lastFetchParamsRef.current.tenantId !== selectedTenant) {
+      lastFetchParamsRef.current = null;
+      console.log('Tenant changed, clearing cache');
+    }
+
+    // Debounce the fetch to prevent rapid successive calls
+    const timeoutId = setTimeout(() => {
+      fetchMetrics();
+    }, 300);
+    
+    return () => clearTimeout(timeoutId);
+  }, [selectedTenant, startDate, endDate]); // Only depend on the actual data parameters
 
   const fetchTenants = async () => {
     setTenantsLoading(true);
@@ -93,27 +206,6 @@ export default function Dashboard() {
     }
   };
 
-  const fetchMetrics = async () => {
-    if (!selectedTenant) return;
-
-    setLoading(true);
-    try {
-      const response = await api.get(
-        `/api/dashboard/metrics?tenantId=${selectedTenant}`
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setMetrics(data);
-      } else {
-        console.error("Failed to fetch metrics:", await response.text());
-      }
-    } catch (error) {
-      console.error("Error fetching metrics:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSync = async () => {
     if (!selectedTenant) return;
 
@@ -124,8 +216,7 @@ export default function Dashboard() {
       });
 
       if (response.ok) {
-        // Refresh metrics after sync
-        await fetchMetrics();
+        await fetchMetrics(true); // Force refresh after sync
         alert("Sync completed successfully!");
       } else {
         const error = await response.json();
@@ -138,6 +229,12 @@ export default function Dashboard() {
       setSyncing(false);
     }
   };
+
+  const handleDateRangeChange = useCallback((start: string, end: string) => {
+    console.log('Date range changed:', { start, end });
+    setStartDate(start);
+    setEndDate(end);
+  }, []);
 
   // Show auth loading wireframe
   if (authLoading) {
@@ -226,12 +323,24 @@ export default function Dashboard() {
           <DashboardWireframe />
         ) : metrics ? (
           <>
+            {/* Date Range Filter */}
+            <DateRangeFilter 
+              onDateRangeChange={handleDateRangeChange}
+              initialStartDate={startDate}
+              initialEndDate={endDate}
+            />
+
             {/* Enhanced Metrics Cards */}
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
               <MetricCard
                 title="Total Customers"
                 value={metrics.totalCustomers.toLocaleString()}
                 description={`+${metrics.customersThisMonth} this month`}
+                trend={{
+                  value: metrics.customersThisMonth > 0 ? 
+                    ((metrics.customersThisMonth / Math.max(metrics.totalCustomers - metrics.customersThisMonth, 1)) * 100) : 0,
+                  isPositive: metrics.customersThisMonth > 0
+                }}
                 icon={
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -243,6 +352,11 @@ export default function Dashboard() {
                 title="Total Orders"
                 value={metrics.totalOrders.toLocaleString()}
                 description={`+${metrics.ordersThisMonth} this month`}
+                trend={{
+                  value: metrics.ordersThisMonth > 0 ? 
+                    ((metrics.ordersThisMonth / Math.max(metrics.totalOrders - metrics.ordersThisMonth, 1)) * 100) : 0,
+                  isPositive: metrics.ordersThisMonth > 0
+                }}
                 icon={
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
@@ -253,6 +367,11 @@ export default function Dashboard() {
                 title="Total Revenue"
                 value={`$${metrics.totalRevenue.toFixed(2)}`}
                 description={`+$${metrics.revenueThisMonth.toFixed(2)} this month`}
+                trend={{
+                  value: metrics.revenueThisMonth > 0 ? 
+                    ((metrics.revenueThisMonth / Math.max(metrics.totalRevenue - metrics.revenueThisMonth, 1)) * 100) : 0,
+                  isPositive: metrics.revenueThisMonth > 0
+                }}
                 icon={
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
@@ -271,11 +390,20 @@ export default function Dashboard() {
               />
             </div>
 
-            {/* Enhanced Charts and Tables */}
-            <div className="grid gap-6 md:grid-cols-7">
-              <OrdersByDateChart data={metrics.ordersByDate} />
-              <TopCustomers customers={metrics.topCustomers} />
+            {/* Revenue Trends */}
+            <RevenueTrends data={metrics.revenueTrends || []} />
+
+            {/* Charts and Tables */}
+            <div className="grid gap-6 md:grid-cols-12">
+              <OrdersByDateChart data={metrics.ordersByDate} className="md:col-span-8" />
+              <TopCustomers customers={metrics.topCustomers} className="md:col-span-4" />
             </div>
+
+            {/* Top Products */}
+            <TopProducts products={metrics.topProducts || []} />
+
+            {/* Custom Events */}
+            <CustomEventsOverview events={metrics.customEvents || []} />
           </>
         ) : (
           <NoDataWireframe />

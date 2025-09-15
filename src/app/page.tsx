@@ -46,9 +46,6 @@ export default function Home() {
             Get Started
           </Button>
         </div>
-        <div className="text-sm text-gray-500">
-          Built for the Xeno FDE Internship Assignment
-        </div>
       </div>
     </div>
   )
