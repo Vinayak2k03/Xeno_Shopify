@@ -18,7 +18,8 @@ export class WebhookManager {
   private baseUrl: string
 
   constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl || process.env.NEXTAUTH_URL || 'http://localhost:3000'
+    this.baseUrl = baseUrl || process.env.WEBHOOK_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000'
+    console.log(`🌐 Webhook Manager initialized with baseUrl: ${this.baseUrl}`)
   }
 
   async registerWebhooksForAllTenants(): Promise<WebhookRegistrationResult[]> {

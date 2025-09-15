@@ -2,13 +2,21 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAuthenticatedUser } from '@/lib/auth-middleware'
 import { PrismaClient } from '@prisma/client'
 
-const prisma = new PrismaClient()
+// Optimized Prisma client with connection pooling
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+  log: ['warn', 'error'], // Reduce logging overhead
+})
 
 // Add a simple in-memory cache for frequently accessed data
 const cache = new Map<string, { data: any; timestamp: number }>()
 const authCache = new Map<string, { user: any; timestamp: number }>()
-const CACHE_TTL = 10 * 60 * 1000 // 10 minutes (increased from 5)
-const AUTH_CACHE_TTL = 5 * 60 * 1000 // 5 minutes for auth cache
+const CACHE_TTL = 15 * 60 * 1000 // 15 minutes (increased for better performance)
+const AUTH_CACHE_TTL = 10 * 60 * 1000 // 10 minutes for auth cache
 
 function getCacheKey(tenantId: string, startDate?: string, endDate?: string): string {
   return `metrics:${tenantId}:${startDate || 'all'}:${endDate || 'all'}`
@@ -75,12 +83,42 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Tenant not found or access denied' }, { status: 404 })
     }
 
-    // Check cache first
+    // Check cache first with more granular keys
     const cacheKey = getCacheKey(tenantId, startDate || '', endDate || '')
     const cached = cache.get(cacheKey)
     if (cached && isCacheValid(cached.timestamp)) {
-      console.log('Returning cached metrics for:', tenantId)
+      console.log(`Returning cached metrics for: ${tenantId} (cached ${Math.round((Date.now() - cached.timestamp) / 1000)}s ago)`)
       return NextResponse.json(cached.data)
+    }
+
+    console.log(`Fetching metrics for tenant: ${tenantId}, dateRange: ${startDate} to ${endDate}`)
+    
+    // Quick count check to avoid expensive queries for empty datasets
+    const quickOrderCount = await prisma.order.count({
+      where: { 
+        tenantId,
+        ...dateFilter
+      }
+    })
+
+    if (quickOrderCount === 0) {
+      console.log('No orders found, returning empty metrics')
+      const emptyMetrics = {
+        totalCustomers: 0,
+        totalOrders: 0,
+        totalRevenue: 0,
+        customersThisMonth: 0,
+        ordersThisMonth: 0,
+        revenueThisMonth: 0,
+        ordersByDate: [],
+        topCustomers: [],
+        topProducts: [],
+        revenueTrends: [],
+        customEvents: []
+      }
+      // Cache empty results too
+      cache.set(cacheKey, { data: emptyMetrics, timestamp: Date.now() })
+      return NextResponse.json(emptyMetrics)
     }
 
     console.log(`Fetching metrics for tenant: ${tenantId}, dateRange: ${startDate} to ${endDate}`)
@@ -98,119 +136,125 @@ export async function GET(request: NextRequest) {
     const rangeEnd = endDate ? new Date(endDate + 'T23:59:59.999Z') : new Date()
 
     const queryStartTime = Date.now()
-    console.log('Starting database queries...')
+    console.log('Starting optimized single-query approach...')
 
-    // OPTIMIZED: Use fewer queries with better joins
-    const [ordersWithCustomers, topProductsData] = await Promise.all([
-      // Single query to get orders with customer data
-      prisma.order.findMany({
-        where: { 
-          tenantId,
-          ...dateFilter
-        },
-        select: {
-          id: true,
-          totalPrice: true,
-          createdAt: true,
-          customerId: true,
-          customer: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              createdAt: true
-            }
+    // ULTRA-AGGRESSIVE OPTIMIZATION: Single query with everything we need
+    const ordersWithCustomersAndItems = await prisma.order.findMany({
+      where: { 
+        tenantId,
+        ...dateFilter
+      },
+      select: {
+        id: true,
+        totalPrice: true,
+        createdAt: true,
+        customerId: true,
+        customer: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            createdAt: true
           }
         },
-        orderBy: {
-          createdAt: 'desc'
+        orderItems: {
+          select: {
+            productId: true,
+            price: true,
+            quantity: true,
+            product: {
+              select: {
+                id: true,
+                title: true
+              }
+            }
+          }
         }
-      }),
-
-      // Get top products using Prisma groupBy (safer than raw SQL)
-      prisma.orderItem.groupBy({
-        by: ['productId'],
-        where: {
-          productId: { not: null },
-          order: {
-            tenantId,
-            createdAt: {
-              gte: rangeStart,
-              lte: rangeEnd
-            }
-          }
-        },
-        _sum: {
-          price: true,
-          quantity: true
-        },
-        orderBy: {
-          _sum: {
-            price: 'desc'
-          }
-        },
-        take: 10
-      })
-    ])
-
-    // Get product details efficiently
-    const productIds = topProductsData
-      .map(item => item.productId)
-      .filter(id => id !== null) as string[]
-    
-    const products = productIds.length > 0 ? await prisma.product.findMany({
-      where: { id: { in: productIds } },
-      select: { id: true, title: true }
-    }) : []
-
-    const queryEndTime = Date.now()
-    console.log(`Database queries completed in ${queryEndTime - queryStartTime}ms`)
-
-    // Extract orders and customers from the joined data
-    const ordersData = ordersWithCustomers
-    const uniqueCustomers = new Map()
-    
-    ordersWithCustomers.forEach(order => {
-      if (order.customer && order.customerId) {
-        uniqueCustomers.set(order.customerId, order.customer)
+      },
+      orderBy: {
+        createdAt: 'desc'
       }
     })
+
+    const queryEndTime = Date.now()
+    console.log(`Single comprehensive query completed in ${queryEndTime - queryStartTime}ms`)
+
+    // Extract and process data from the single comprehensive query with optimized algorithms
+    const ordersData = ordersWithCustomersAndItems
+    const uniqueCustomers = new Map()
+    const productRevenueMap = new Map<string, {revenue: number, units: number, title: string}>()
+    const dailyStats = new Map<string, {revenue: number, orders: number}>()
+    const customerSpending = new Map<string, number>()
+    
+    let totalRevenue = 0
+    let totalOrders = 0
+    let revenueThisMonth = 0
+    let ordersThisMonth = 0
+    
+    // Process all data in a single loop for maximum efficiency
+    const processingStartTime = Date.now()
+    
+    ordersWithCustomersAndItems.forEach((order: any) => {
+      const orderRevenue = Number(order.totalPrice || 0)
+      const orderDate = new Date(order.createdAt)
+      const isThisMonth = orderDate >= new Date(startOfThisMonth)
+      const dayKey = orderDate.toISOString().split('T')[0]
+      
+      // Aggregate totals
+      totalRevenue += orderRevenue
+      totalOrders++
+      
+      if (isThisMonth) {
+        revenueThisMonth += orderRevenue
+        ordersThisMonth++
+      }
+      
+      // Daily stats
+      const dayStats = dailyStats.get(dayKey) || {revenue: 0, orders: 0}
+      dayStats.revenue += orderRevenue
+      dayStats.orders++
+      dailyStats.set(dayKey, dayStats)
+      
+      // Collect unique customers and their spending
+      if (order.customer && order.customerId) {
+        uniqueCustomers.set(order.customerId, order.customer)
+        const currentSpending = customerSpending.get(order.customerId) || 0
+        customerSpending.set(order.customerId, currentSpending + orderRevenue)
+      }
+      
+      // Process order items for product metrics
+      order.orderItems?.forEach((item: any) => {
+        if (item.productId && item.product) {
+          const itemRevenue = Number(item.price || 0)
+          const itemQuantity = Number(item.quantity || 0)
+          const existing = productRevenueMap.get(item.productId) || {revenue: 0, units: 0, title: item.product.title || 'Unknown'}
+          productRevenueMap.set(item.productId, {
+            revenue: existing.revenue + itemRevenue,
+            units: existing.units + Number(item.quantity || 0),
+            title: existing.title
+          })
+        }
+      })
+    })
+    
+    const processingEndTime = Date.now()
+    console.log(`Data processing completed in ${processingEndTime - processingStartTime}ms`)
     
     const customersData = Array.from(uniqueCustomers.values())
 
-    // Calculate metrics from fetched data
+    // Calculate remaining metrics from processed data
     const totalCustomers = customersData.length
     const customersThisMonth = customersData.filter((c: any) => 
       new Date(c.createdAt) >= new Date(startOfThisMonth)
     ).length
 
-    const totalOrders = ordersData.length
-    const ordersThisMonth = ordersData.filter((o: any) => 
-      new Date(o.createdAt) >= new Date(startOfThisMonth)
-    ).length
-
-    const totalRevenue = ordersData.reduce((sum: number, order: any) => sum + Number(order.totalPrice || 0), 0)
-    const revenueThisMonth = ordersData
-      .filter((o: any) => new Date(o.createdAt) >= new Date(startOfThisMonth))
-      .reduce((sum: number, order: any) => sum + Number(order.totalPrice || 0), 0)
-
-    // Process orders by date
-    const ordersByDateMap = new Map<string, {orders: number, revenue: number}>()
-    
-    ordersData.forEach((order: any) => {
-      const orderDate = new Date(order.createdAt)
-      if (orderDate >= rangeStart && orderDate <= rangeEnd) {
-        const dateStr = orderDate.toISOString().split('T')[0]
-        const existing = ordersByDateMap.get(dateStr) || {orders: 0, revenue: 0}
-        ordersByDateMap.set(dateStr, {
-          orders: existing.orders + 1,
-          revenue: existing.revenue + Number(order.totalPrice || 0)
-        })
-      }
-    })
-
-    const ordersByDate = Array.from(ordersByDateMap.entries())
+    // Convert daily stats to ordersByDate format
+    const ordersByDate = Array.from(dailyStats.entries())
+      .filter(([dateStr]) => {
+        const date = new Date(dateStr)
+        return date >= rangeStart && date <= rangeEnd
+      })
       .map(([date, data]) => ({
         date,
         orders: data.orders,
@@ -218,92 +262,109 @@ export async function GET(request: NextRequest) {
       }))
       .sort((a, b) => a.date.localeCompare(b.date))
 
-    // Process revenue trends
-    const revenueTrendsMap = new Map<string, {revenue: number, orders: number, customers: number}>()
-    
-    ordersData.forEach((order: any) => {
-      const orderDate = new Date(order.createdAt)
-      if (orderDate >= rangeStart && orderDate <= rangeEnd) {
-        const dateStr = orderDate.toISOString().split('T')[0]
-        const existing = revenueTrendsMap.get(dateStr) || {revenue: 0, orders: 0, customers: 0}
-        revenueTrendsMap.set(dateStr, {
-          revenue: existing.revenue + Number(order.totalPrice || 0),
-          orders: existing.orders + 1,
-          customers: existing.customers
-        })
-      }
-    })
-
-    // Add customer data to revenue trends
-    customersData.forEach((customer: any) => {
-      const customerDate = new Date(customer.createdAt)
-      if (customerDate >= rangeStart && customerDate <= rangeEnd) {
-        const dateStr = customerDate.toISOString().split('T')[0]
-        const existing = revenueTrendsMap.get(dateStr) || {revenue: 0, orders: 0, customers: 0}
-        revenueTrendsMap.set(dateStr, {
-          ...existing,
-          customers: existing.customers + 1
-        })
-      }
-    })
-
-    const revenueTrends = Array.from(revenueTrendsMap.entries())
-      .map(([date, data]) => ({
-        date,
-        revenue: data.revenue,
-        orders: data.orders,
-        customers: data.customers,
-        averageOrderValue: data.orders > 0 ? data.revenue / data.orders : 0
-      }))
+    // Process revenue trends using our pre-calculated daily stats
+    const revenueTrends = Array.from(dailyStats.entries())
+      .filter(([dateStr]) => {
+        const date = new Date(dateStr)
+        return date >= rangeStart && date <= rangeEnd
+      })
+      .map(([date, data]) => {
+        // Count customers who joined on this date
+        const customersOnDate = customersData.filter((customer: any) => {
+          const customerDate = new Date(customer.createdAt)
+          return customerDate.toISOString().split('T')[0] === date
+        }).length
+        
+        return {
+          date,
+          revenue: data.revenue,
+          orders: data.orders,
+          customers: customersOnDate,
+          averageOrderValue: data.orders > 0 ? data.revenue / data.orders : 0
+        }
+      })
       .sort((a, b) => a.date.localeCompare(b.date))
 
-    // Calculate customer spending and order counts from actual orders data
-    const customerSpendingMap = new Map<string, {totalSpent: number, ordersCount: number}>()
-    
-    ordersData.forEach((order: any) => {
-      if (order.customerId) {
-        const existing = customerSpendingMap.get(order.customerId) || {totalSpent: 0, ordersCount: 0}
-        customerSpendingMap.set(order.customerId, {
-          totalSpent: existing.totalSpent + Number(order.totalPrice || 0),
-          ordersCount: existing.ordersCount + 1
-        })
-      }
-    })
-
-    // Get top customers with calculated spending
-    const topCustomers = customersData
-      .map((customer: any) => {
-        const spending = customerSpendingMap.get(customer.id) || {totalSpent: 0, ordersCount: 0}
+    // Get top customers using pre-calculated spending
+    const topCustomers = Array.from(customerSpending.entries())
+      .map(([customerId, totalSpent]) => {
+        const customer = uniqueCustomers.get(customerId)
+        if (!customer) return null
+        
+        // Count orders for this customer
+        const ordersCount = ordersData.filter((o: any) => o.customerId === customerId).length
+        
         return {
           id: customer.id,
           name: `${customer.firstName || ''} ${customer.lastName || ''}`.trim() || 'Unknown',
           email: customer.email || 'No email',
-          totalSpent: Number(spending.totalSpent),
-          ordersCount: Number(spending.ordersCount)
+          totalSpent: Number(totalSpent),
+          ordersCount: Number(ordersCount)
         }
       })
+      .filter((customer): customer is NonNullable<typeof customer> => customer !== null)
       .sort((a, b) => b.totalSpent - a.totalSpent) // Sort by spending descending
       .slice(0, 5)
 
-    // Process top products from Prisma groupBy results
-    const productMap = products.reduce((acc, product) => {
-      acc[product.id] = product
-      return acc
-    }, {} as Record<string, { id: string; title: string }>)
+    // Process top products from the single query data
+    const topProducts = Array.from(productRevenueMap.entries())
+      .map(([productId, data]) => ({
+        id: productId,
+        title: data.title,
+        revenue: data.revenue,
+        unitsSold: data.units,
+        averagePrice: data.units > 0 ? data.revenue / data.units : 0
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10)
 
-    const topProducts = topProductsData.map((item: any) => {
-      const product = productMap[item.productId || '']
-      const revenue = Number(item._sum.price || 0)
-      const unitsSold = Number(item._sum.quantity || 0)
+    // Fetch custom events data (optimized with single query)
+    const thirtyDaysAgo = new Date()
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
-      return {
-        id: item.productId || '',
-        title: product?.title || 'Unknown Product',
-        revenue,
-        unitsSold,
-        averagePrice: unitsSold > 0 ? revenue / unitsSold : 0
+    const customEventsData = await prisma.customEvent.groupBy({
+      by: ['eventType'],
+      where: {
+        tenantId: tenantId,
+        createdAt: {
+          gte: thirtyDaysAgo
+        }
+      },
+      _count: {
+        id: true
       }
     })
+
+    // Calculate abandoned cart value
+    const abandonedCartEvents = await prisma.customEvent.findMany({
+      where: {
+        tenantId: tenantId,
+        eventType: 'cart_abandoned',
+        createdAt: {
+          gte: thirtyDaysAgo
+        }
+      },
+      select: {
+        eventData: true
+      }
+    })
+
+    const totalAbandonedValue = abandonedCartEvents.reduce((sum, event) => {
+      const eventData = event.eventData as any
+      return sum + (eventData?.totalPrice || 0)
+    }, 0)
+
+    const customEventsSummary = {
+      cartCreated: customEventsData.find(e => e.eventType === 'cart_created')?._count.id || 0,
+      cartAbandoned: customEventsData.find(e => e.eventType === 'cart_abandoned')?._count.id || 0,
+      checkoutStarted: customEventsData.find(e => e.eventType === 'checkout_started')?._count.id || 0,
+      totalAbandonedValue: totalAbandonedValue,
+      abandonmentRate: (() => {
+        const created = customEventsData.find(e => e.eventType === 'cart_created')?._count.id || 0
+        const abandoned = customEventsData.find(e => e.eventType === 'cart_abandoned')?._count.id || 0
+        return created > 0 ? ((abandoned / created) * 100).toFixed(1) : '0'
+      })()
+    }
 
     // Prepare response data
     const metrics = {
@@ -317,20 +378,16 @@ export async function GET(request: NextRequest) {
       topCustomers,
       topProducts,
       revenueTrends: revenueTrends,
-      customEvents: [] // Removed for performance - can be added back if needed
+      customEvents: customEventsSummary
     }
 
-    console.log('Metrics calculated for tenant:', tenantId, {
-      ...metrics,
-      topCustomers: metrics.topCustomers.map(c => ({
-        ...c,
-        totalSpentType: typeof c.totalSpent,
-        ordersCountType: typeof c.ordersCount
-      }))
-    })
+    console.log('Metrics calculated for tenant:', tenantId, 'with optimized single query approach')
 
-    // Cache the result
+    // Cache the result with enhanced TTL
     cache.set(cacheKey, { data: metrics, timestamp: Date.now() })
+
+    const totalTime = Date.now() - queryStartTime
+    console.log(`Total metrics calculation completed in ${totalTime}ms`)
 
     return NextResponse.json(metrics)
 

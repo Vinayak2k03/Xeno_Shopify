@@ -48,9 +48,10 @@ interface SyncData {
 interface SyncManagerProps {
   tenantId: string
   className?: string
+  onSyncComplete?: () => void
 }
 
-export function SyncManager({ tenantId, className }: SyncManagerProps) {
+export function SyncManager({ tenantId, className, onSyncComplete }: SyncManagerProps) {
   const [syncData, setSyncData] = useState<SyncData | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -97,6 +98,8 @@ export function SyncManager({ tenantId, className }: SyncManagerProps) {
         console.log('Sync completed:', result)
         // Refresh status after sync
         setTimeout(fetchSyncStatus, 1000)
+        // Call the completion callback
+        onSyncComplete?.()
       } else {
         console.error('Sync failed:', result.error)
       }

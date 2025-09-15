@@ -12,7 +12,7 @@ import { TopCustomers } from "@/components/dashboard/top-customers";
 import { TopProducts } from "@/components/dashboard/top-products";
 import { RevenueTrends } from "@/components/dashboard/revenue-trends";
 import { DateRangeFilter } from "@/components/dashboard/date-range-filter";
-import { CustomEventsOverview } from "@/components/dashboard/custom-events";
+import { CustomEventsSummary } from "@/components/dashboard/custom-events-summary";
 import { SyncManager } from "@/components/dashboard/sync-manager";
 import { WebhookManager } from "@/components/dashboard/webhook-manager";
 import { cn } from "@/lib/utils";
@@ -66,13 +66,13 @@ interface DashboardMetrics {
     customers: number;
     averageOrderValue: number;
   }>;
-  customEvents: Array<{
-    id: string;
-    eventType: string;
-    eventData: any;
-    createdAt: string;
-    customerId?: string;
-  }>;
+  customEvents: {
+    cartCreated: number;
+    cartAbandoned: number;
+    checkoutStarted: number;
+    totalAbandonedValue: number;
+    abandonmentRate: string;
+  };
 }
 
 export default function Dashboard() {
@@ -436,7 +436,7 @@ export default function Dashboard() {
                   <TopProducts products={metrics.topProducts || []} />
 
                   {/* Custom Events */}
-                  <CustomEventsOverview events={metrics.customEvents || []} />
+                  <CustomEventsSummary data={metrics.customEvents} />
                 </>
               ) : (
                 <NoDataWireframe />
@@ -446,7 +446,7 @@ export default function Dashboard() {
               <div className="space-y-6">
                 <div className="grid gap-6 lg:grid-cols-2">
                   <SyncManager 
-                    selectedTenant={selectedTenant}
+                    tenantId={selectedTenant}
                     onSyncComplete={() => {
                       // Refresh analytics data if we're on analytics tab
                       if (activeTab === 'analytics') {
@@ -454,7 +454,7 @@ export default function Dashboard() {
                       }
                     }}
                   />
-                  <WebhookManager selectedTenant={selectedTenant} />
+                  <WebhookManager tenantId={selectedTenant} />
                 </div>
               </div>
             )}

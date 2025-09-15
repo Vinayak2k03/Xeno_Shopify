@@ -309,11 +309,6 @@ export class ShopifyService {
         format: 'json'
       },
       {
-        topic: 'orders/cancelled',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
         topic: 'customers/create',
         address: `${baseUrl}/api/webhooks/shopify`,
         format: 'json'
@@ -330,16 +325,6 @@ export class ShopifyService {
       },
       {
         topic: 'products/update',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'carts/create',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'carts/update',
         address: `${baseUrl}/api/webhooks/shopify`,
         format: 'json'
       },

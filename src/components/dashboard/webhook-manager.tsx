@@ -41,6 +41,11 @@ export function WebhookManager({ tenantId, className }: WebhookManagerProps) {
   const [managing, setManaging] = useState(false)
 
   const fetchWebhookStatus = async () => {
+    if (!tenantId) {
+      setLoading(false)
+      return
+    }
+    
     try {
       const response = await fetch(`/api/webhooks?tenantId=${tenantId}`, {
         credentials: 'include'
@@ -50,7 +55,8 @@ export function WebhookManager({ tenantId, className }: WebhookManagerProps) {
         const data = await response.json()
         setWebhookData(data)
       } else {
-        console.error('Failed to fetch webhook status')
+        const errorText = await response.text()
+        console.error('Failed to fetch webhook status:', response.status, errorText)
       }
     } catch (error) {
       console.error('Error fetching webhook status:', error)
@@ -93,6 +99,25 @@ export function WebhookManager({ tenantId, className }: WebhookManagerProps) {
   useEffect(() => {
     fetchWebhookStatus()
   }, [tenantId])
+
+  if (!tenantId) {
+    return (
+      <Card className={className}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Webhook className="w-5 h-5" />
+            Webhook Management
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center text-muted-foreground py-8">
+            <Settings className="w-8 h-8 mx-auto mb-2" />
+            <p>Please select a tenant to manage webhooks</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   if (loading) {
     return (
