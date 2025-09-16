@@ -74,7 +74,6 @@ model Tenant {
   shopifyAccessToken String?
   apiKey            String?
   apiSecret         String?
-  webhookSecret     String?
   isActive          Boolean   @default(true)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -85,7 +84,6 @@ model Tenant {
   customers         Customer[]
   orders            Order[]
   products          Product[]
-  customEvents      CustomEvent[]
   syncLogs          SyncLog[]
 
   @@map("tenants")
@@ -109,7 +107,6 @@ model Customer {
   // Relations
   tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   orders           Order[]
-  customEvents     CustomEvent[]
 
   @@unique([shopifyId, tenantId])
   @@map("customers")
@@ -184,23 +181,6 @@ model OrderItem {
   product         Product? @relation(fields: [productId], references: [id])
 
   @@map("order_items")
-}
-
-model CustomEvent {
-  id          String    @id @default(cuid())
-  tenantId    String
-  customerId  String?
-  eventType   String    // cart_abandoned, checkout_started, product_viewed, etc.
-  eventData   Json?
-  userAgent   String?
-  ipAddress   String?
-  createdAt   DateTime  @default(now())
-  
-  // Relations
-  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer    Customer? @relation(fields: [customerId], references: [id])
-
-  @@map("custom_events")
 }
 
 model SyncLog {

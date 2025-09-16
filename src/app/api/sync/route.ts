@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthenticatedUser } from '@/lib/auth-middleware'
 import { syncTenantById } from '@/lib/scheduler'
-import { webhookManager } from '@/lib/webhook-manager'
 import { prisma } from '@/lib/db'
 
 // POST /api/sync - Manual sync trigger
@@ -13,7 +12,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { tenantId, types, force } = body
+    const { tenantId, types, force, historical } = body
 
     if (!tenantId) {
       return NextResponse.json({ error: 'Tenant ID is required' }, { status: 400 })
@@ -31,11 +30,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
     }
 
-    // Trigger sync
-    const results = await syncTenantById(tenantId, user.id, {
+    // If historical sync is requested, force a full sync
+    const syncOptions = {
       types: types || ['orders', 'customers', 'products'],
-      force: force || false
-    })
+      force: force || historical || false
+    }
+
+    // Trigger sync
+    const results = await syncTenantById(tenantId, user.id, syncOptions)
 
     return NextResponse.json({
       success: true,
@@ -45,7 +47,8 @@ export async function POST(request: NextRequest) {
       totalRecords: results.reduce((sum, r) => sum + r.recordsProcessed, 0),
       totalDuration: results.reduce((sum, r) => sum + r.duration, 0),
       successful: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length
+      failed: results.filter(r => !r.success).length,
+      syncType: historical ? 'historical' : force ? 'force' : 'incremental'
     })
 
   } catch (error) {
@@ -113,15 +116,11 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Get webhook status
-    const webhookStatus = await webhookManager.getWebhookStatusForTenant(tenantId)
-
     return NextResponse.json({
       tenantId,
       tenantName: tenant.name,
       lastActivity: syncLogs[0]?.createdAt || tenant.createdAt,
       syncStatus,
-      webhookStatus,
       recentLogs: syncLogs.slice(0, 10).map(log => ({
         id: log.id,
         type: log.syncType,

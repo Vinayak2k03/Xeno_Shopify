@@ -71,6 +71,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // For data fetching, we need to get ALL historical data if no dates specified
+    // This ensures we have complete data for trends and totals
+    const shouldFetchAllData = !startDate || !endDate
+
     // Verify tenant belongs to user
     const tenant = await prisma.tenant.findFirst({
       where: {
@@ -97,7 +101,8 @@ export async function GET(request: NextRequest) {
     const quickOrderCount = await prisma.order.count({
       where: { 
         tenantId,
-        ...dateFilter
+        // Only apply date filter for count if specific dates provided
+        ...(shouldFetchAllData ? {} : dateFilter)
       }
     })
 
@@ -113,8 +118,7 @@ export async function GET(request: NextRequest) {
         ordersByDate: [],
         topCustomers: [],
         topProducts: [],
-        revenueTrends: [],
-        customEvents: []
+        revenueTrends: []
       }
       // Cache empty results too
       cache.set(cacheKey, { data: emptyMetrics, timestamp: Date.now() })
@@ -128,7 +132,7 @@ export async function GET(request: NextRequest) {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
     const startOfThisMonth = startOfMonth.toISOString()
 
-    // Set default date range if not provided (last 30 days)
+    // Set default date range if not provided (last 30 days for display, but fetch ALL data)
     const defaultStartDate = new Date()
     defaultStartDate.setDate(defaultStartDate.getDate() - 30)
     
@@ -139,10 +143,12 @@ export async function GET(request: NextRequest) {
     console.log('Starting optimized single-query approach...')
 
     // ULTRA-AGGRESSIVE OPTIMIZATION: Single query with everything we need
+    // For historical data completeness, fetch ALL data if no specific date range provided
     const ordersWithCustomersAndItems = await prisma.order.findMany({
       where: { 
         tenantId,
-        ...dateFilter
+        // Only apply date filter if specific dates are provided for filtering
+        ...(shouldFetchAllData ? {} : dateFilter)
       },
       select: {
         id: true,
@@ -187,34 +193,46 @@ export async function GET(request: NextRequest) {
     const dailyStats = new Map<string, {revenue: number, orders: number}>()
     const customerSpending = new Map<string, number>()
     
-    let totalRevenue = 0
-    let totalOrders = 0
-    let revenueThisMonth = 0
-    let ordersThisMonth = 0
-    
     // Process all data in a single loop for maximum efficiency
     const processingStartTime = Date.now()
+    
+    // Separate totals (all data) from range-specific data
+    let totalRevenue = 0
+    let totalOrders = 0
+    let rangeRevenue = 0
+    let rangeOrders = 0
+    let revenueThisMonth = 0
+    let ordersThisMonth = 0
     
     ordersWithCustomersAndItems.forEach((order: any) => {
       const orderRevenue = Number(order.totalPrice || 0)
       const orderDate = new Date(order.createdAt)
       const isThisMonth = orderDate >= new Date(startOfThisMonth)
+      const isInRange = orderDate >= rangeStart && orderDate <= rangeEnd
       const dayKey = orderDate.toISOString().split('T')[0]
       
-      // Aggregate totals
+      // Aggregate totals (all historical data)
       totalRevenue += orderRevenue
       totalOrders++
+      
+      // Range-specific aggregates (for trends and charts)
+      if (isInRange) {
+        rangeRevenue += orderRevenue
+        rangeOrders++
+      }
       
       if (isThisMonth) {
         revenueThisMonth += orderRevenue
         ordersThisMonth++
       }
       
-      // Daily stats
-      const dayStats = dailyStats.get(dayKey) || {revenue: 0, orders: 0}
-      dayStats.revenue += orderRevenue
-      dayStats.orders++
-      dailyStats.set(dayKey, dayStats)
+      // Daily stats (only for data within range for charts)
+      if (isInRange) {
+        const dayStats = dailyStats.get(dayKey) || {revenue: 0, orders: 0}
+        dayStats.revenue += orderRevenue
+        dayStats.orders++
+        dailyStats.set(dayKey, dayStats)
+      }
       
       // Collect unique customers and their spending
       if (order.customer && order.customerId) {
@@ -249,12 +267,8 @@ export async function GET(request: NextRequest) {
       new Date(c.createdAt) >= new Date(startOfThisMonth)
     ).length
 
-    // Convert daily stats to ordersByDate format
+    // Convert daily stats to ordersByDate format (filtered to range)
     const ordersByDate = Array.from(dailyStats.entries())
-      .filter(([dateStr]) => {
-        const date = new Date(dateStr)
-        return date >= rangeStart && date <= rangeEnd
-      })
       .map(([date, data]) => ({
         date,
         orders: data.orders,
@@ -262,12 +276,8 @@ export async function GET(request: NextRequest) {
       }))
       .sort((a, b) => a.date.localeCompare(b.date))
 
-    // Process revenue trends using our pre-calculated daily stats
+    // Process revenue trends using our pre-calculated daily stats (already filtered to range)
     const revenueTrends = Array.from(dailyStats.entries())
-      .filter(([dateStr]) => {
-        const date = new Date(dateStr)
-        return date >= rangeStart && date <= rangeEnd
-      })
       .map(([date, data]) => {
         // Count customers who joined on this date
         const customersOnDate = customersData.filter((customer: any) => {
@@ -318,54 +328,6 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10)
 
-    // Fetch custom events data (optimized with single query)
-    const thirtyDaysAgo = new Date()
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-
-    const customEventsData = await prisma.customEvent.groupBy({
-      by: ['eventType'],
-      where: {
-        tenantId: tenantId,
-        createdAt: {
-          gte: thirtyDaysAgo
-        }
-      },
-      _count: {
-        id: true
-      }
-    })
-
-    // Calculate abandoned cart value
-    const abandonedCartEvents = await prisma.customEvent.findMany({
-      where: {
-        tenantId: tenantId,
-        eventType: 'cart_abandoned',
-        createdAt: {
-          gte: thirtyDaysAgo
-        }
-      },
-      select: {
-        eventData: true
-      }
-    })
-
-    const totalAbandonedValue = abandonedCartEvents.reduce((sum, event) => {
-      const eventData = event.eventData as any
-      return sum + (eventData?.totalPrice || 0)
-    }, 0)
-
-    const customEventsSummary = {
-      cartCreated: customEventsData.find(e => e.eventType === 'cart_created')?._count.id || 0,
-      cartAbandoned: customEventsData.find(e => e.eventType === 'cart_abandoned')?._count.id || 0,
-      checkoutStarted: customEventsData.find(e => e.eventType === 'checkout_started')?._count.id || 0,
-      totalAbandonedValue: totalAbandonedValue,
-      abandonmentRate: (() => {
-        const created = customEventsData.find(e => e.eventType === 'cart_created')?._count.id || 0
-        const abandoned = customEventsData.find(e => e.eventType === 'cart_abandoned')?._count.id || 0
-        return created > 0 ? ((abandoned / created) * 100).toFixed(1) : '0'
-      })()
-    }
-
     // Prepare response data
     const metrics = {
       totalCustomers: Number(totalCustomers),
@@ -377,8 +339,7 @@ export async function GET(request: NextRequest) {
       ordersByDate: ordersByDate,
       topCustomers,
       topProducts,
-      revenueTrends: revenueTrends,
-      customEvents: customEventsSummary
+      revenueTrends: revenueTrends
     }
 
     console.log('Metrics calculated for tenant:', tenantId, 'with optimized single query approach')

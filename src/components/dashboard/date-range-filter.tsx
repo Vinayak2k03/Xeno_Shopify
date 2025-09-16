@@ -13,7 +13,7 @@ interface DateRangeProps {
 }
 
 export function DateRangeFilter({ onDateRangeChange, initialStartDate, initialEndDate, className }: DateRangeProps) {
-  const [selectedRange, setSelectedRange] = useState('30d')
+  const [selectedRange, setSelectedRange] = useState('3m') // Changed default from '30d' to '3m'
   const [customStart, setCustomStart] = useState(initialStartDate || '')
   const [customEnd, setCustomEnd] = useState(initialEndDate || '')
 

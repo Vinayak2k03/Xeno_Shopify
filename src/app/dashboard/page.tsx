@@ -12,9 +12,7 @@ import { TopCustomers } from "@/components/dashboard/top-customers";
 import { TopProducts } from "@/components/dashboard/top-products";
 import { RevenueTrends } from "@/components/dashboard/revenue-trends";
 import { DateRangeFilter } from "@/components/dashboard/date-range-filter";
-import { CustomEventsSummary } from "@/components/dashboard/custom-events-summary";
 import { SyncManager } from "@/components/dashboard/sync-manager";
-import { WebhookManager } from "@/components/dashboard/webhook-manager";
 import { cn } from "@/lib/utils";
 
 // Import wireframe components
@@ -66,13 +64,6 @@ interface DashboardMetrics {
     customers: number;
     averageOrderValue: number;
   }>;
-  customEvents: {
-    cartCreated: number;
-    cartAbandoned: number;
-    checkoutStarted: number;
-    totalAbandonedValue: number;
-    abandonmentRate: string;
-  };
 }
 
 export default function Dashboard() {
@@ -89,11 +80,11 @@ export default function Dashboard() {
   // Use a ref to prevent multiple simultaneous API calls
   const fetchingRef = useRef(false);
   
-  // Initialize with default date range (last 30 days)
+  // Initialize with default date range (last 3 months for better historical view)
   const getDefaultDates = () => {
     const end = new Date();
     const start = new Date();
-    start.setDate(end.getDate() - 30);
+    start.setMonth(end.getMonth() - 3); // Changed from 30 days to 3 months
     return {
       start: start.toISOString().split('T')[0],
       end: end.toISOString().split('T')[0]
@@ -438,9 +429,6 @@ export default function Dashboard() {
 
                   {/* Top Products */}
                   <TopProducts products={metrics.topProducts || []} />
-
-                  {/* Custom Events */}
-                  <CustomEventsSummary data={metrics.customEvents} />
                 </>
               ) : (
                 <NoDataWireframe />
@@ -448,16 +436,13 @@ export default function Dashboard() {
             ) : (
               /* Sync Management Tab */
               <div className="space-y-6">
-                <div className="grid gap-6 lg:grid-cols-2">
-                  <SyncManager 
-                    tenantId={selectedTenant}
-                    onSyncComplete={() => {
-                      // Always refresh analytics data after sync
-                      fetchMetrics(true);
-                    }}
-                  />
-                  <WebhookManager tenantId={selectedTenant} />
-                </div>
+                <SyncManager 
+                  tenantId={selectedTenant}
+                  onSyncComplete={() => {
+                    // Always refresh analytics data after sync
+                    fetchMetrics(true);
+                  }}
+                />
               </div>
             )}
           </>

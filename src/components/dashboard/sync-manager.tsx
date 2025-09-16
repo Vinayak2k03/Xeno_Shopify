@@ -14,8 +14,7 @@ import {
   AlertCircle,
   Settings,
   Activity,
-  BarChart3,
-  Zap
+  BarChart3
 } from 'lucide-react'
 
 interface SyncStatus {
@@ -33,7 +32,6 @@ interface SyncData {
   tenantName: string
   lastActivity: string
   syncStatus: Record<string, SyncStatus>
-  webhookStatus: any
   recentLogs: Array<{
     id: string
     type: string
@@ -76,7 +74,7 @@ export function SyncManager({ tenantId, className, onSyncComplete }: SyncManager
     }
   }
 
-  const triggerSync = async (types?: string[], force = false) => {
+  const triggerSync = async (types?: string[], force = false, historical = false) => {
     setSyncing(true)
     try {
       const response = await fetch('/api/sync', {
@@ -88,7 +86,8 @@ export function SyncManager({ tenantId, className, onSyncComplete }: SyncManager
         body: JSON.stringify({
           tenantId,
           types: types || selectedTypes,
-          force
+          force,
+          historical
         })
       })
 
@@ -217,9 +216,22 @@ export function SyncManager({ tenantId, className, onSyncComplete }: SyncManager
                 {syncing ? (
                   <RefreshCw className="w-4 h-4 animate-spin mr-2" />
                 ) : (
-                  <Zap className="w-4 h-4 mr-2" />
+                  <RefreshCw className="w-4 h-4 mr-2" />
                 )}
                 Sync Now
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => triggerSync(undefined, false, true)}
+                disabled={syncing}
+                size="sm"
+              >
+                {syncing ? (
+                  <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <Database className="w-4 h-4 mr-2" />
+                )}
+                Full Historical Sync
               </Button>
             </div>
           </CardTitle>
@@ -288,44 +300,6 @@ export function SyncManager({ tenantId, className, onSyncComplete }: SyncManager
         ))}
       </div>
 
-      {/* Webhook Status */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Zap className="w-5 h-5" />
-            Webhook Status
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Total Webhooks</div>
-              <div className="text-2xl font-bold">{syncData.webhookStatus.totalWebhooks || 0}</div>
-            </div>
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Our Webhooks</div>
-              <div className="text-2xl font-bold text-blue-600">{syncData.webhookStatus.ourWebhooks || 0}</div>
-            </div>
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Health Status</div>
-              <div className="flex items-center gap-2">
-                {syncData.webhookStatus.ourWebhooks > 0 ? (
-                  <>
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                    <span className="text-green-600">Active</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle className="w-4 h-4 text-yellow-500" />
-                    <span className="text-yellow-600">Setup Required</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Recent Sync Logs */}
       <Card>
         <CardHeader>
@@ -378,43 +352,76 @@ export function SyncManager({ tenantId, className, onSyncComplete }: SyncManager
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            <Button
-              variant="outline"
-              onClick={() => triggerSync(['orders'], true)}
-              disabled={syncing}
-              className="justify-start"
-            >
-              <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-              Sync Orders
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => triggerSync(['customers'], true)}
-              disabled={syncing}
-              className="justify-start"
-            >
-              <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-              Sync Customers
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => triggerSync(['products'], true)}
-              disabled={syncing}
-              className="justify-start"
-            >
-              <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-              Sync Products
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => triggerSync(undefined, true)}
-              disabled={syncing}
-              className="justify-start"
-            >
-              <Database className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-              Full Sync
-            </Button>
+          <div className="space-y-4">
+            <div className="text-sm text-muted-foreground">
+              Quick sync options - Use &quot;Historical Sync&quot; if you&apos;re missing older data
+            </div>
+            
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+              <Button
+                variant="outline"
+                onClick={() => triggerSync(['orders'], true)}
+                disabled={syncing}
+                className="justify-start"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+                Sync Orders
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => triggerSync(['customers'], true)}
+                disabled={syncing}
+                className="justify-start"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+                Sync Customers
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => triggerSync(['products'], true)}
+                disabled={syncing}
+                className="justify-start"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+                Sync Products
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => triggerSync(undefined, true)}
+                disabled={syncing}
+                className="justify-start"
+              >
+                <Database className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+                Full Sync
+              </Button>
+            </div>
+
+            <div className="border-t pt-4">
+              <div className="text-sm font-medium mb-2">Historical Data Sync</div>
+              <div className="text-xs text-muted-foreground mb-3">
+                Fetches data from the last 30 days. Use this if you&apos;re missing previous orders or customer data.
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => triggerSync(['orders'], false, true)}
+                  disabled={syncing}
+                  className="justify-start"
+                >
+                  <BarChart3 className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+                  Historical Orders
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => triggerSync(undefined, false, true)}
+                  disabled={syncing}
+                  className="justify-start"
+                >
+                  <BarChart3 className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+                  Full Historical Sync
+                </Button>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>

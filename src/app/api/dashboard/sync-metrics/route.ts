@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthenticatedUser } from '@/lib/auth-middleware'
 import { prisma } from '@/lib/db'
-import { webhookManager } from '@/lib/webhook-manager'
 
 // GET /api/dashboard/sync-metrics - Get comprehensive sync metrics
 export async function GET(request: NextRequest) {
@@ -36,9 +35,6 @@ export async function GET(request: NextRequest) {
     // Get sync metrics
     const syncMetrics = await getSyncMetrics(tenantId, startDate)
     
-    // Get webhook metrics
-    const webhookMetrics = await getWebhookMetrics(tenantId, startDate)
-    
     // Get data health metrics
     const dataHealth = await getDataHealthMetrics(tenantId)
     
@@ -54,7 +50,6 @@ export async function GET(request: NextRequest) {
         endDate: new Date()
       },
       syncMetrics,
-      webhookMetrics,
       dataHealth,
       performance
     })
@@ -135,82 +130,12 @@ async function getSyncMetrics(tenantId: string, startDate: Date) {
   }
 }
 
-async function getWebhookMetrics(tenantId: string, startDate: Date) {
-  // Get webhook-related sync logs
-  const webhookLogs = await prisma.syncLog.findMany({
-    where: {
-      tenantId,
-      syncType: {
-        startsWith: 'webhook_'
-      },
-      createdAt: {
-        gte: startDate
-      }
-    },
-    orderBy: {
-      createdAt: 'desc'
-    }
-  })
-
-  // Get webhook status
-  let webhookStatus
-  try {
-    webhookStatus = await webhookManager.getWebhookStatusForTenant(tenantId)
-  } catch (error) {
-    webhookStatus = { error: 'Unable to fetch webhook status' }
-  }
-
-  // Group by webhook topic
-      const byTopic: Record<string, any> = {}
-  webhookLogs.forEach(log => {
-    const topic = log.syncType.replace('webhook_', '').replace('_', '/')
-    if (!byTopic[topic]) {
-      byTopic[topic] = {
-        total: 0,
-        successful: 0,
-        failed: 0,
-        avgDuration: 0
-      }
-    }
-    
-    byTopic[topic].total++
-    if (log.success) {
-      byTopic[topic].successful++
-    } else {
-      byTopic[topic].failed++
-    }
-  })
-
-  // Calculate averages
-  Object.keys(byTopic).forEach(topic => {
-    const logs = webhookLogs.filter(l => l.syncType === `webhook_${topic.replace('/', '_')}`)
-    byTopic[topic].avgDuration = logs.length > 0 ? (logs.reduce((sum, l) => sum + l.duration, 0) / logs.length).toFixed(0) : '0'
-    byTopic[topic].successRate = byTopic[topic].total > 0 ? (byTopic[topic].successful / byTopic[topic].total * 100).toFixed(1) : '0'
-  })
-
-  return {
-    status: webhookStatus,
-    totalWebhookEvents: webhookLogs.length,
-    successfulEvents: webhookLogs.filter(l => l.success).length,
-    failedEvents: webhookLogs.filter(l => !l.success).length,
-    byTopic,
-    recentEvents: webhookLogs.slice(0, 10).map(log => ({
-      topic: log.syncType.replace('webhook_', '').replace('_', '/'),
-      success: log.success,
-      duration: log.duration,
-      createdAt: log.createdAt,
-      error: log.error
-    }))
-  }
-}
-
 async function getDataHealthMetrics(tenantId: string) {
   // Get record counts
-  const [customerCount, orderCount, productCount, customEventCount] = await Promise.all([
+  const [customerCount, orderCount, productCount] = await Promise.all([
     prisma.customer.count({ where: { tenantId } }),
     prisma.order.count({ where: { tenantId } }),
-    prisma.product.count({ where: { tenantId } }),
-    prisma.customEvent.count({ where: { tenantId } })
+    prisma.product.count({ where: { tenantId } })
   ])
 
   // Get recent activity
@@ -241,31 +166,17 @@ async function getDataHealthMetrics(tenantId: string) {
     })
   ])
 
-  // Get custom events breakdown
-  const customEventTypes = await prisma.customEvent.groupBy({
-    by: ['eventType'],
-    where: { tenantId },
-    _count: {
-      eventType: true
-    }
-  })
-
   return {
     recordCounts: {
       customers: customerCount,
       orders: orderCount,
-      products: productCount,
-      customEvents: customEventCount
+      products: productCount
     },
     recentActivity: {
       customers: recentCustomers,
       orders: recentOrders,
       products: recentProducts
-    },
-    customEventTypes: customEventTypes.map(e => ({
-      type: e.eventType,
-      count: e._count.eventType
-    }))
+    }
   }
 }
 

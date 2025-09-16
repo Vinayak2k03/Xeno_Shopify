@@ -134,8 +134,7 @@ async function syncTenant(tenant: any, options: SyncOptions = {}): Promise<SyncR
       domain: tenant.shopifyDomain,
       accessToken: tenant.shopifyAccessToken,
       apiKey: tenant.apiKey || undefined,
-      apiSecret: tenant.apiSecret || undefined,
-      webhookSecret: tenant.webhookSecret || undefined
+      apiSecret: tenant.apiSecret || undefined
     }, tenant.id)
 
     const syncTypes = options.types || ['orders', 'customers', 'products']
@@ -148,13 +147,25 @@ async function syncTenant(tenant: any, options: SyncOptions = {}): Promise<SyncR
       try {
         switch (syncType) {
           case 'orders':
-            recordsProcessed = await retrySync(() => shopifyService.syncOrders(100), 3)
+            if (options.force) {
+              recordsProcessed = await retrySync(() => shopifyService.forceSyncOrders(100), 3)
+            } else {
+              recordsProcessed = await retrySync(() => shopifyService.syncOrders(100), 3)
+            }
             break
           case 'customers':
-            recordsProcessed = await retrySync(() => shopifyService.syncCustomers(100), 3)
+            if (options.force) {
+              recordsProcessed = await retrySync(() => shopifyService.forceSyncCustomers(100), 3)
+            } else {
+              recordsProcessed = await retrySync(() => shopifyService.syncCustomers(100), 3)
+            }
             break
           case 'products':
-            recordsProcessed = await retrySync(() => shopifyService.syncProducts(100), 3)
+            if (options.force) {
+              recordsProcessed = await retrySync(() => shopifyService.forceSyncProducts(100), 3)
+            } else {
+              recordsProcessed = await retrySync(() => shopifyService.syncProducts(100), 3)
+            }
             break
           case 'analytics':
             // Custom analytics sync logic would go here

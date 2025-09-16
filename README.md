@@ -1,262 +1,145 @@
 # Xeno Shopify Service
 
-A multi-tenant Shopify Data Ingestion & Insights Service built for the Xeno FDE Internship Assignment.
+A multi-tenant analytics dashboard and data ingestion service for Shopify stores. Built with Next.js, TypeScript, Prisma, and PostgreSQL.
 
-## 🚀 Features
+---
 
-- **Multi-tenant Architecture**: Isolated data per Shopify store
-- **Real-time Data Sync**: Webhooks + scheduled sync jobs
-- **Insights Dashboard**: Customer, order, and revenue analytics
-- **Email Authentication**: Secure access with NextAuth.js
-- **Shopify Integration**: Complete API integration with error handling
+## 🚀 Features Implemented
+
+- **Multi-tenant support:** Manage and analyze multiple Shopify stores from a single dashboard.
+- **Secure authentication:** JWT-based user authentication.
+- **Shopify data sync:** Scheduled and manual sync for orders, customers, and products.
+- **Analytics dashboard:** Visualize revenue, orders, customers, top products, and trends.
+- **Custom events:** Track cart abandonment and checkout started events.
+- **Real-time & scheduled sync:** Uses both webhooks (when enabled) and scheduled jobs for reliability.
+- **Error handling & logging:** Sync logs and error tracking for all tenants.
+- **Production-ready:** Optimized for deployment on Vercel or similar platforms.
+
+---
 
 ## 🛠️ Tech Stack
 
-- **Backend**: Next.js 14 (App Router), TypeScript
-- **Database**: PostgreSQL with Prisma ORM
-- **Authentication**: NextAuth.js with email provider
-- **Frontend**: React 18, Tailwind CSS, Recharts
-- **API Integration**: Shopify Admin API
-- **Deployment**: Vercel (Frontend) + Railway (Database)
+- **Frontend:** Next.js (App Router), React, Tailwind CSS
+- **Backend:** Next.js API routes, Prisma ORM
+- **Database:** PostgreSQL (Neon, Supabase, or Render compatible)
+- **Authentication:** JWT
+- **Shopify API:** REST Admin API (2024-01)
+- **Scheduling:** node-cron
 
-## 📋 Prerequisites
+---
 
-- Node.js 18+ and npm
-- PostgreSQL database
-- Shopify development store
-- Email service (Gmail/SendGrid) for authentication
+## ⚡ Quick Start
 
-## 🏗️ Setup Instructions
-
-### 1. Clone and Install
+### 1. Clone the repository
 
 ```bash
-git clone <repository-url>
-cd shopify-service
+git clone https://github.com/yourusername/xeno-shopify-service.git
+cd xeno-shopify-service
+```
+
+### 2. Install dependencies
+
+```bash
 npm install
 ```
 
-### 2. Environment Variables
+### 3. Configure environment variables
 
-Create a `.env` file:
+Copy `.env.example` to `.env` and fill in your credentials:
 
 ```env
-# Database
-DATABASE_URL="postgresql://username:password@localhost:5432/shopify_service_db"
-
-# NextAuth.js
-NEXTAUTH_SECRET="your-nextauth-secret-here"
-NEXTAUTH_URL="http://localhost:3000"
-
-# Shopify Configuration
-SHOPIFY_API_VERSION="2024-01"
-
-# Email Configuration (for authentication)
-EMAIL_SERVER_HOST="smtp.gmail.com"
-EMAIL_SERVER_PORT=587
-EMAIL_SERVER_USER="your-email@gmail.com"
-EMAIL_SERVER_PASSWORD="your-app-password"
-EMAIL_FROM="your-email@gmail.com"
+DATABASE_URL=postgresql://...
+JWT_SECRET=your-super-secret-key
+JWT_EXPIRES_IN=7d
+SHOPIFY_API_VERSION=2024-01
+SHOPIFY_STORE_DOMAIN=yourstore.myshopify.com
+SHOPIFY_ACCESS_TOKEN=shpat_xxx
+RESEND_API_KEY=...
+EMAIL_FROM=...
 ```
 
-### 3. Database Setup
+### 4. Run database migrations
 
 ```bash
-# Generate Prisma client
-npx prisma generate
-
-# Run database migrations
-npx prisma migrate dev --name init
-
-# (Optional) View database
-npx prisma studio
+npx prisma migrate deploy
 ```
 
-### 4. Shopify Store Setup
-
-1. **Create Development Store**:
-   - Go to [partners.shopify.com](https://partners.shopify.com)
-   - Create a development store with dummy data
-
-2. **Create Private App**:
-   - In your store admin: Settings → Apps → Develop apps
-   - Create app with scopes: `read_customers`, `read_orders`, `read_products`
-   - Copy the access token
-
-3. **Configure Webhooks** (Optional):
-   - Add webhook endpoints pointing to `/api/webhooks/shopify`
-
-### 5. Start Development Server
+### 5. Start the development server
 
 ```bash
 npm run dev
 ```
 
-Visit `http://localhost:3000` and:
-1. Sign in with your email
-2. Add your Shopify store configuration
-3. Sync data and explore the dashboard
+---
 
-## 📊 Architecture Overview
+## 🖥️ Usage
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Shopify API   │    │   Next.js App    │    │   PostgreSQL    │
-│                 │───▶│                  │───▶│                 │
-│ - Customers     │    │ - Authentication │    │ - Multi-tenant  │
-│ - Orders        │    │ - Dashboard      │    │ - Relationships │
-│ - Products      │    │ - API Routes     │    │ - Indexes       │
-│ - Webhooks      │    │ - Sync Service   │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
-
-### Database Schema
-
-**Core Tables**:
-- `tenants`: Store configurations
-- `customers`: Shopify customer data
-- `orders`: Order information with line items
-- `products`: Product catalog
-- `custom_events`: Cart/checkout tracking
-
-**Authentication Tables** (NextAuth.js):
-- `users`, `accounts`, `sessions`, `verification_tokens`
-
-## 🔌 API Endpoints
-
-### Authentication
-- `GET/POST /api/auth/[...nextauth]` - NextAuth.js endpoints
-
-### Tenant Management
-- `GET /api/tenants` - List user's tenants
-- `POST /api/tenants` - Create new tenant
-
-### Data Operations
-- `POST /api/sync` - Sync Shopify data
-- `GET /api/dashboard/metrics` - Dashboard analytics
-
-### Webhooks
-- `POST /api/webhooks/shopify` - Shopify webhook handler
-
-## 📈 Dashboard Features
-
-### Metrics Cards
-- Total customers, orders, revenue
-- Monthly growth indicators
-- Average order value
-
-### Charts & Analytics
-- Orders and revenue over time (line chart)
-- Top 5 customers by spend
-- Date range filtering
-
-### Data Management
-- One-click data sync
-- Real-time webhook updates
-- Multi-tenant data isolation
-
-## 🔄 Data Sync Strategy
-
-**Initial Sync**: Manual trigger via dashboard
-**Incremental Sync**: 
-- Webhooks for real-time updates
-- Scheduled sync every 30 minutes (production)
-- Handles rate limits and errors gracefully
-
-## 🚀 Deployment
-
-### Database (Railway)
-1. Create PostgreSQL instance on Railway
-2. Copy connection string to `DATABASE_URL`
-3. Run migrations: `npx prisma migrate deploy`
-
-### Application (Vercel)
-1. Push code to GitHub
-2. Connect repository to Vercel
-3. Add environment variables
-4. Deploy
-
-### Post-Deployment
-1. Configure webhooks to point to your domain
-2. Test authentication and sync
-3. Set up monitoring
-
-## 🔍 Testing
-
-### Manual Testing Steps
-1. **Authentication**: Email sign-in flow
-2. **Tenant Creation**: Add Shopify store
-3. **Data Sync**: Initial sync + webhooks
-4. **Dashboard**: Verify metrics and charts
-5. **Multi-tenancy**: Multiple stores isolation
-
-### Sample Data
-The app works with Shopify's development store dummy data or your own test data.
-
-## ⚠️ Known Limitations
-
-1. **Rate Limits**: Shopify API limits (40 calls/app/minute)
-2. **Real-time Updates**: Webhook delivery not guaranteed
-3. **Data Validation**: Basic validation, could be enhanced
-4. **Error Handling**: Logs errors but limited retry logic
-5. **Scalability**: Single-instance design, needs queue for scale
-
-## 🔧 Production Considerations
-
-### Security
-- [ ] Webhook signature verification
-- [ ] Rate limiting on API endpoints
-- [ ] Input validation and sanitization
-- [ ] Environment variable validation
-
-### Performance
-- [ ] Database connection pooling
-- [ ] Caching layer (Redis)
-- [ ] Background job queue
-- [ ] CDN for static assets
-
-### Monitoring
-- [ ] Error tracking (Sentry)
-- [ ] Performance monitoring
-- [ ] Webhook delivery monitoring
-- [ ] Health checks
-
-### Scalability
-- [ ] Horizontal scaling with load balancer
-- [ ] Database read replicas
-- [ ] Message queue for async processing
-- [ ] Microservices architecture
-
-## 🎯 Next Steps for Production
-
-1. **Enhanced Security**: OAuth flow, RBAC, audit logging
-2. **Advanced Analytics**: Custom date ranges, cohort analysis
-3. **Data Export**: CSV/Excel export functionality
-4. **Notification System**: Email alerts for sync failures
-5. **Admin Panel**: Tenant management, system monitoring
-6. **API Documentation**: OpenAPI/Swagger specs
-7. **Testing Suite**: Unit, integration, and E2E tests
-
-## 📝 Development Notes
-
-### Key Design Decisions
-- **Multi-tenancy**: Row-level security with tenant_id
-- **Real-time Updates**: Webhooks + fallback polling
-- **Authentication**: Email-only (simpler than OAuth)
-- **UI Framework**: Custom components (no external lib)
-
-### Trade-offs Made
-- **Simplicity vs Features**: Basic features well-implemented
-- **Performance vs Development Speed**: Optimized for dev speed
-- **Security vs Usability**: Email auth vs full OAuth
-
-## 📞 Support
-
-For questions about this implementation:
-- Check the code comments for implementation details
-- Review the Shopify API documentation
-- Test with development store data first
+- **Login/Register:** Create an account and log in.
+- **Add Shopify Store:** Connect your Shopify store(s) via the dashboard.
+- **Sync Data:** Use the dashboard to trigger manual sync or wait for scheduled syncs.
+- **View Analytics:** Explore revenue, orders, customers, and product analytics.
+- **Custom Events:** See cart abandonment and checkout started events in the dashboard.
 
 ---
 
-**Built for Xeno FDE Internship Assignment 2025**
+## 🗓️ Data Sync & Scheduling
+
+- **Orders, Customers:** Synced every 15 minutes by default.
+- **Products:** Synced every 30 minutes.
+- **Analytics:** Synced hourly.
+- **Manual Sync:** Trigger on-demand sync from the dashboard.
+- **Sync Logs:** All syncs are logged for audit and troubleshooting.
+
+---
+
+## 🏗️ Deployment
+
+### Deploy to Vercel
+
+1. Import your repo on [Vercel](https://vercel.com).
+2. Set all environment variables in the Vercel dashboard.
+3. Deploy!
+
+### Environment Variables
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `JWT_EXPIRES_IN`
+- `SHOPIFY_API_VERSION`
+- `SHOPIFY_STORE_DOMAIN`
+- `SHOPIFY_ACCESS_TOKEN`
+- `RESEND_API_KEY`
+- `EMAIL_FROM`
+- *(Optional)* `WEBHOOK_URL` (for webhooks, if enabled)
+
+---
+
+## 📝 Trade-offs & Approach
+
+- **Performance:** Optimized with parallel queries, batching, and caching for fast dashboard loads.
+- **Simplicity:** Focused on core analytics and sync reliability over advanced features.
+- **Maintainability:** Modular code, clear separation of concerns, and strong typing.
+- **Security:** All secrets in environment variables, JWT auth, and Shopify HMAC verification.
+
+---
+
+## 📊 Analytics Dashboard
+
+- **Metrics:** Total revenue, orders, customers, and growth rates.
+- **Trends:** Revenue and order trends over time.
+- **Top Customers/Products:** Identify best customers and products.
+- **Custom Events:** Cart abandonment and checkout started tracking.
+
+---
+
+## 🤝 Contributing
+
+Pull requests and issues are welcome! Please open an issue to discuss your idea or bug before submitting a PR.
+
+---
+
+## 📄 License
+
+MIT
+
+---

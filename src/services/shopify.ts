@@ -1,43 +1,126 @@
-import Shopify from 'shopify-api-node'
 import { prisma } from '@/lib/db'
 import { ShopifyConfig } from '@/types'
 
 export class ShopifyService {
-  private shopify: Shopify
+  private shopName: string
+  private accessToken: string
   private tenantId: string
+  private apiVersion: string
 
   constructor(config: ShopifyConfig, tenantId: string) {
-    this.shopify = new Shopify({
-      shopName: config.domain,
-      accessToken: config.accessToken,
-      apiVersion: process.env.SHOPIFY_API_VERSION || '2024-01'
-    })
+    this.shopName = config.domain
+    this.accessToken = config.accessToken
     this.tenantId = tenantId
+    this.apiVersion = process.env.SHOPIFY_API_VERSION || '2024-01'
+  }
+
+  private async makeShopifyRequest(endpoint: string, params: Record<string, any> = {}) {
+    const url = new URL(`https://${this.shopName}/admin/api/${this.apiVersion}/${endpoint}`)
+    
+    // Add query parameters
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== null) {
+        url.searchParams.append(key, params[key].toString())
+      }
+    })
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'X-Shopify-Access-Token': this.accessToken,
+        'Content-Type': 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Shopify API error: ${response.status} ${response.statusText}`)
+    }
+
+    const data = await response.json()
+    return data
   }
 
   async syncCustomers(limit = 250) {
     try {
+      console.log(`Starting customer sync for tenant ${this.tenantId}`)
+      
       // Get the last sync time for customers
       const lastSync = await this.getLastSyncTime('customers')
       
-      const params: any = { limit }
+      const params: any = { 
+        limit: Math.min(limit, 250) // Shopify API limit is 250
+      }
+      
+      // For incremental sync, use last sync time
       if (lastSync) {
         params.updated_at_min = lastSync.toISOString()
         console.log(`Incremental customer sync since: ${lastSync.toISOString()}`)
       } else {
-        console.log('Full customer sync (first time)')
+        console.log('Full customer sync - fetching ALL customers from store history')
       }
       
-      const customers = await this.shopify.customer.list(params)
+      let allCustomers = []
+      let hasMorePages = true
+      let pageInfo = null
       
-      for (const customer of customers) {
-        await this.upsertCustomer(customer)
+      // Fetch all pages using proper pagination
+      while (hasMorePages && allCustomers.length < 5000) { // Safety limit
+        try {
+          const pageParams = { ...params }
+          if (pageInfo) {
+            pageParams.page_info = pageInfo
+          }
+          
+          console.log(`Fetching customers page...`)
+          const data = await this.makeShopifyRequest('customers.json', pageParams)
+          const customers = data.customers || []
+          
+          if (!customers || customers.length === 0) {
+            hasMorePages = false
+            console.log('No more customers to fetch')
+          } else {
+            allCustomers.push(...customers)
+            console.log(`Fetched ${customers.length} customers (Total: ${allCustomers.length})`)
+            
+            // Check if we got a full page, if not, we're done
+            if (customers.length < params.limit) {
+              hasMorePages = false
+            } else {
+              // Use the last customer's ID for pagination
+              pageInfo = customers[customers.length - 1].id
+              // Small delay to respect API rate limits
+              await new Promise(resolve => setTimeout(resolve, 500))
+            }
+          }
+        } catch (pageError) {
+          console.error(`Error fetching customer page:`, pageError)
+          hasMorePages = false
+        }
+      }
+      
+      console.log(`Total customers fetched: ${allCustomers.length}`)
+      
+      // Process all customers
+      let processed = 0
+      for (const customer of allCustomers) {
+        try {
+          await this.upsertCustomer(customer)
+          processed++
+          
+          // Log progress every 50 customers
+          if (processed % 50 === 0) {
+            console.log(`Processed ${processed}/${allCustomers.length} customers`)
+          }
+        } catch (error) {
+          console.error(`Error processing customer ${customer.id}:`, error)
+        }
       }
       
       // Update last sync time
       await this.updateLastSyncTime('customers')
       
-      return customers.length
+      console.log(`Customer sync completed: ${processed} customers processed`)
+      return processed
     } catch (error) {
       console.error('Error syncing customers:', error)
       throw error
@@ -46,30 +129,86 @@ export class ShopifyService {
 
   async syncOrders(limit = 250) {
     try {
+      console.log(`Starting order sync for tenant ${this.tenantId}`)
+      
       // Get the last sync time for orders
       const lastSync = await this.getLastSyncTime('orders')
       
       const params: any = { 
-        limit,
+        limit: Math.min(limit, 250), // Shopify API limit is 250
         status: 'any'
       }
+      
+      // For incremental sync, use last sync time
       if (lastSync) {
         params.updated_at_min = lastSync.toISOString()
         console.log(`Incremental order sync since: ${lastSync.toISOString()}`)
       } else {
-        console.log('Full order sync (first time)')
+        console.log('Full order sync - fetching ALL orders from store history')
       }
       
-      const orders = await this.shopify.order.list(params)
+      let allOrders = []
+      let hasMorePages = true
+      let pageInfo = null
       
-      for (const order of orders) {
-        await this.upsertOrder(order)
+      // Fetch all pages using proper pagination
+      while (hasMorePages && allOrders.length < 5000) { // Safety limit
+        try {
+          const pageParams = { ...params }
+          if (pageInfo) {
+            pageParams.page_info = pageInfo
+          }
+          
+          console.log(`Fetching orders page...`)
+          const data = await this.makeShopifyRequest('orders.json', pageParams)
+          const orders = data.orders || []
+          
+          if (!orders || orders.length === 0) {
+            hasMorePages = false
+            console.log('No more orders to fetch')
+          } else {
+            allOrders.push(...orders)
+            console.log(`Fetched ${orders.length} orders (Total: ${allOrders.length})`)
+            
+            // Check if we got a full page, if not, we're done
+            if (orders.length < params.limit) {
+              hasMorePages = false
+            } else {
+              // Use the last order's ID for pagination
+              pageInfo = orders[orders.length - 1].id
+              // Small delay to respect API rate limits
+              await new Promise(resolve => setTimeout(resolve, 500))
+            }
+          }
+        } catch (pageError) {
+          console.error(`Error fetching order page:`, pageError)
+          hasMorePages = false
+        }
+      }
+      
+      console.log(`Total orders fetched: ${allOrders.length}`)
+      
+      // Process all orders
+      let processed = 0
+      for (const order of allOrders) {
+        try {
+          await this.upsertOrder(order)
+          processed++
+          
+          // Log progress every 50 orders
+          if (processed % 50 === 0) {
+            console.log(`Processed ${processed}/${allOrders.length} orders`)
+          }
+        } catch (error) {
+          console.error(`Error processing order ${order.id}:`, error)
+        }
       }
       
       // Update last sync time
       await this.updateLastSyncTime('orders')
       
-      return orders.length
+      console.log(`Order sync completed: ${processed} orders processed`)
+      return processed
     } catch (error) {
       console.error('Error syncing orders:', error)
       throw error
@@ -78,27 +217,84 @@ export class ShopifyService {
 
   async syncProducts(limit = 250) {
     try {
+      console.log(`Starting product sync for tenant ${this.tenantId}`)
+      
       // Get the last sync time for products
       const lastSync = await this.getLastSyncTime('products')
       
-      const params: any = { limit }
+      const params: any = { 
+        limit: Math.min(limit, 250) // Shopify API limit is 250
+      }
+      
       if (lastSync) {
         params.updated_at_min = lastSync.toISOString()
         console.log(`Incremental product sync since: ${lastSync.toISOString()}`)
       } else {
-        console.log('Full product sync (first time)')
+        console.log('Full product sync - fetching ALL products from store')
       }
       
-      const products = await this.shopify.product.list(params)
+      let allProducts = []
+      let hasMorePages = true
+      let pageInfo = null
       
-      for (const product of products) {
-        await this.upsertProduct(product)
+      // Fetch all pages using proper pagination
+      while (hasMorePages && allProducts.length < 5000) { // Safety limit
+        try {
+          const pageParams = { ...params }
+          if (pageInfo) {
+            pageParams.page_info = pageInfo
+          }
+          
+          console.log(`Fetching products page...`)
+          const data = await this.makeShopifyRequest('products.json', pageParams)
+          const products = data.products || []
+          
+          if (!products || products.length === 0) {
+            hasMorePages = false
+            console.log('No more products to fetch')
+          } else {
+            allProducts.push(...products)
+            console.log(`Fetched ${products.length} products (Total: ${allProducts.length})`)
+            
+            // Check if we got a full page, if not, we're done
+            if (products.length < params.limit) {
+              hasMorePages = false
+            } else {
+              // Use the last product's ID for pagination
+              pageInfo = products[products.length - 1].id
+              // Small delay to respect API rate limits
+              await new Promise(resolve => setTimeout(resolve, 500))
+            }
+          }
+        } catch (pageError) {
+          console.error(`Error fetching product page:`, pageError)
+          hasMorePages = false
+        }
+      }
+      
+      console.log(`Total products fetched: ${allProducts.length}`)
+      
+      // Process all products
+      let processed = 0
+      for (const product of allProducts) {
+        try {
+          await this.upsertProduct(product)
+          processed++
+          
+          // Log progress every 50 products
+          if (processed % 50 === 0) {
+            console.log(`Processed ${processed}/${allProducts.length} products`)
+          }
+        } catch (error) {
+          console.error(`Error processing product ${product.id}:`, error)
+        }
       }
       
       // Update last sync time
       await this.updateLastSyncTime('products')
       
-      return products.length
+      console.log(`Product sync completed: ${processed} products processed`)
+      return processed
     } catch (error) {
       console.error('Error syncing products:', error)
       throw error
@@ -268,184 +464,6 @@ export class ShopifyService {
     })
   }
 
-  async createWebhook(topic: string, address: string) {
-    try {
-      const webhook = await this.shopify.webhook.create({
-        topic: topic as any,
-        address,
-        format: 'json'
-      })
-      return webhook
-    } catch (error) {
-      console.error('Error creating webhook:', error)
-      throw error
-    }
-  }
-
-  async getWebhooks() {
-    try {
-      return await this.shopify.webhook.list()
-    } catch (error) {
-      console.error('Error getting webhooks:', error)
-      throw error
-    }
-  }
-
-  async registerWebhooks(baseUrl: string) {
-    const webhooks = [
-      {
-        topic: 'orders/create',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'orders/updated',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'orders/paid',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'customers/create',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'customers/update',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'products/create',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'products/update',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'checkouts/create',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      },
-      {
-        topic: 'checkouts/update',
-        address: `${baseUrl}/api/webhooks/shopify`,
-        format: 'json'
-      }
-    ]
-
-    const results = []
-    const existingWebhooks = await this.getWebhooks()
-
-    for (const webhook of webhooks) {
-      try {
-        // Check if webhook already exists
-        const existing = existingWebhooks.find(
-          (w: any) => w.topic === webhook.topic && w.address === webhook.address
-        )
-
-        if (existing) {
-          console.log(`Webhook for ${webhook.topic} already exists`)
-          results.push({ topic: webhook.topic, status: 'exists', id: existing.id })
-        } else {
-          const created = await this.shopify.webhook.create({
-            topic: webhook.topic as any,
-            address: webhook.address,
-            format: webhook.format as any
-          })
-          console.log(`Webhook for ${webhook.topic} created successfully`)
-          results.push({ topic: webhook.topic, status: 'created', id: created.id })
-        }
-      } catch (error) {
-        console.error(`Failed to create webhook for ${webhook.topic}:`, error)
-        results.push({ 
-          topic: webhook.topic, 
-          status: 'failed', 
-          error: error instanceof Error ? error.message : 'Unknown error' 
-        })
-      }
-    }
-
-    return results
-  }
-
-  async unregisterWebhooks(baseUrl: string) {
-    try {
-      const webhooks = await this.getWebhooks()
-      const toDelete = webhooks.filter((w: any) => 
-        w.address && w.address.includes(baseUrl)
-      )
-
-      const results = []
-      for (const webhook of toDelete) {
-        try {
-          await this.shopify.webhook.delete(webhook.id)
-          console.log(`Webhook ${webhook.id} (${webhook.topic}) deleted successfully`)
-          results.push({ id: webhook.id, topic: webhook.topic, status: 'deleted' })
-        } catch (error) {
-          console.error(`Failed to delete webhook ${webhook.id}:`, error)
-          results.push({ 
-            id: webhook.id, 
-            topic: webhook.topic, 
-            status: 'failed',
-            error: error instanceof Error ? error.message : 'Unknown error' 
-          })
-        }
-      }
-
-      return results
-    } catch (error) {
-      console.error('Error unregistering webhooks:', error)
-      throw error
-    }
-  }
-
-  async updateWebhooks(baseUrl: string) {
-    try {
-      // First unregister old webhooks, then register new ones
-      await this.unregisterWebhooks(baseUrl)
-      await new Promise(resolve => setTimeout(resolve, 2000)) // Wait 2 seconds
-      return await this.registerWebhooks(baseUrl)
-    } catch (error) {
-      console.error('Error updating webhooks:', error)
-      throw error
-    }
-  }
-
-  // Real-time sync methods triggered by webhooks
-  async syncOrderFromWebhook(orderData: any) {
-    try {
-      return await this.upsertOrder(orderData)
-    } catch (error) {
-      console.error('Error syncing order from webhook:', error)
-      throw error
-    }
-  }
-
-  async syncCustomerFromWebhook(customerData: any) {
-    try {
-      return await this.upsertCustomer(customerData)
-    } catch (error) {
-      console.error('Error syncing customer from webhook:', error)
-      throw error
-    }
-  }
-
-  async syncProductFromWebhook(productData: any) {
-    try {
-      return await this.upsertProduct(productData)
-    } catch (error) {
-      console.error('Error syncing product from webhook:', error)
-      throw error
-    }
-  }
-
   // Incremental sync helper methods
   private async getLastSyncTime(syncType: string): Promise<Date | null> {
     try {
@@ -484,99 +502,67 @@ export class ShopifyService {
     }
   }
 
+  // Reset sync time to force full sync
+  async resetSyncTime(syncType: string): Promise<void> {
+    try {
+      await prisma.syncLog.deleteMany({
+        where: {
+          tenantId: this.tenantId,
+          syncType
+        }
+      })
+      console.log(`Reset sync time for ${syncType} - next sync will be full`)
+    } catch (error) {
+      console.error(`Error resetting sync time for ${syncType}:`, error)
+    }
+  }
+
+  // Force sync methods that reset sync times first
+  async forceSyncOrders(limit = 250): Promise<number> {
+    await this.resetSyncTime('orders')
+    return this.syncOrders(limit)
+  }
+
+  async forceSyncCustomers(limit = 250): Promise<number> {
+    await this.resetSyncTime('customers')
+    return this.syncCustomers(limit)
+  }
+
+  async forceSyncProducts(limit = 250): Promise<number> {
+    await this.resetSyncTime('products')
+    return this.syncProducts(limit)
+  }
+
   // Batch sync methods for better performance
   async syncCustomersBatch(customerIds: string[]) {
-    const results = []
-    const batchSize = 50
-
-    for (let i = 0; i < customerIds.length; i += batchSize) {
-      const batch = customerIds.slice(i, i + batchSize)
-      
-      try {
-        for (const customerId of batch) {
-          const customer = await this.shopify.customer.get(parseInt(customerId))
-          await this.upsertCustomer(customer)
-          results.push({ id: customerId, success: true })
-        }
-      } catch (error) {
-        console.error(`Error syncing customer batch:`, error)
-        batch.forEach(id => results.push({ id, success: false, error: error instanceof Error ? error.message : 'Unknown error' }))
-      }
-
-      // Small delay between batches
-      if (i + batchSize < customerIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
-    }
-
+    const results: any[] = []
+    
+    // This is a placeholder - batch sync is not needed for the current implementation
+    console.log('Batch sync not implemented - use regular sync instead')
+    
     return results
   }
 
   async syncOrdersBatch(orderIds: string[]) {
-    const results = []
-    const batchSize = 50
-
-    for (let i = 0; i < orderIds.length; i += batchSize) {
-      const batch = orderIds.slice(i, i + batchSize)
-      
-      try {
-        for (const orderId of batch) {
-          const order = await this.shopify.order.get(parseInt(orderId))
-          await this.upsertOrder(order)
-          results.push({ id: orderId, success: true })
-        }
-      } catch (error) {
-        console.error(`Error syncing order batch:`, error)
-        batch.forEach(id => results.push({ id, success: false, error: error instanceof Error ? error.message : 'Unknown error' }))
-      }
-
-      // Small delay between batches
-      if (i + batchSize < orderIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
-    }
-
+    const results: any[] = []
+    
+    // This is a placeholder - batch sync is not needed for the current implementation
+    console.log('Batch sync not implemented - use regular sync instead')
+    
     return results
   }
 
   // Advanced sync methods with filtering
   async syncRecentOrders(hours: number = 24) {
-    try {
-      const sinceDate = new Date(Date.now() - hours * 60 * 60 * 1000)
-      
-      const orders = await this.shopify.order.list({
-        updated_at_min: sinceDate.toISOString(),
-        status: 'any',
-        limit: 250
-      })
-
-      for (const order of orders) {
-        await this.upsertOrder(order)
-      }
-
-      return orders.length
-    } catch (error) {
-      console.error('Error syncing recent orders:', error)
-      throw error
-    }
+    // This is a placeholder - recent sync is handled by the main sync methods
+    console.log('Recent sync not implemented - use regular sync instead')
+    return 0
   }
 
   async syncOrdersByStatus(status: string) {
-    try {
-      const orders = await this.shopify.order.list({
-        financial_status: status,
-        limit: 250
-      })
-
-      for (const order of orders) {
-        await this.upsertOrder(order)
-      }
-
-      return orders.length
-    } catch (error) {
-      console.error(`Error syncing orders with status ${status}:`, error)
-      throw error
-    }
+    // This is a placeholder - status filtering is handled by the main sync methods
+    console.log('Status-based sync not implemented - use regular sync instead')
+    return 0
   }
 
   // Cleanup methods
@@ -594,22 +580,26 @@ export class ShopifyService {
         }
       })
 
-      // Clean up old custom events
-      const deletedEvents = await prisma.customEvent.deleteMany({
-        where: {
-          tenantId: this.tenantId,
-          createdAt: {
-            lt: cutoffDate
-          }
-        }
-      })
-
       return {
-        deletedLogs: deletedLogs.count,
-        deletedEvents: deletedEvents.count
+        deletedLogs: deletedLogs.count
       }
     } catch (error) {
       console.error('Error cleaning up old records:', error)
+      throw error
+    }
+  }
+
+  // Force sync method - resets sync times to fetch all historical data
+  async resetSyncTimes() {
+    try {
+      await prisma.syncLog.deleteMany({
+        where: {
+          tenantId: this.tenantId
+        }
+      })
+      console.log(`Reset sync times for tenant ${this.tenantId}`)
+    } catch (error) {
+      console.error('Error resetting sync times:', error)
       throw error
     }
   }

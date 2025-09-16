@@ -3,7 +3,6 @@ export interface ShopifyConfig {
   accessToken: string
   apiKey?: string
   apiSecret?: string
-  webhookSecret?: string
 }
 
 export interface TenantWithConfig {
@@ -13,7 +12,6 @@ export interface TenantWithConfig {
   shopifyAccessToken?: string
   apiKey?: string
   apiSecret?: string
-  webhookSecret?: string
   isActive: boolean
   userId: string
 }
@@ -101,12 +99,4 @@ export interface ShopifyProduct {
   variants: any[]
   created_at: string
   updated_at: string
-}
-
-export interface WebhookEvent {
-  id: string
-  topic: string
-  shop_domain: string
-  payload: any
-  created_at: string
 }
