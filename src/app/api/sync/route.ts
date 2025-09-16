@@ -47,17 +47,17 @@ export async function POST(request: NextRequest) {
     console.log('[SYNC API] Found tenant:', { 
       name: tenant.name, 
       domain: tenant.shopifyDomain,
-      accessToken: tenant.accessToken ? '✓ Set' : '✗ Missing'
+      accessToken: tenant.shopifyAccessToken ? '✓ Set' : '✗ Missing'
     })
 
     // Validate tenant credentials
-    if (!tenant.shopifyDomain || !tenant.accessToken) {
+    if (!tenant.shopifyDomain || !tenant.shopifyAccessToken) {
       console.error('[SYNC API] Missing tenant credentials')
       return NextResponse.json({ 
         error: 'Tenant is missing required Shopify credentials',
         details: {
           domain: tenant.shopifyDomain ? '✓' : '✗',
-          accessToken: tenant.accessToken ? '✓' : '✗'
+          accessToken: tenant.shopifyAccessToken ? '✓' : '✗'
         }
       }, { status: 400 })
     }

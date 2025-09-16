@@ -1,9 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ['bcrypt']
-  },
+  serverExternalPackages: ['bcrypt'],
   // Increase timeout for API routes to handle long sync operations
   async headers() {
     return [

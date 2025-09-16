@@ -34,14 +34,14 @@ export async function POST(request: NextRequest) {
     console.log('[SHOPIFY TEST] Testing connectivity for tenant:', {
       name: tenant.name,
       domain: tenant.shopifyDomain,
-      hasAccessToken: !!tenant.accessToken
+      hasAccessToken: !!tenant.shopifyAccessToken
     })
 
     // Test 1: Basic shop info
     console.log('[SHOPIFY TEST] Test 1: Fetching shop info')
     const shopInfo = await makeShopifyRequest(
       tenant.shopifyDomain,
-      tenant.accessToken,
+      tenant.shopifyAccessToken!,
       'shop.json'
     )
 
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     console.log('[SHOPIFY TEST] Test 2: Counting orders')
     const orderCount = await makeShopifyRequest(
       tenant.shopifyDomain,
-      tenant.accessToken,
+      tenant.shopifyAccessToken!,
       'orders/count.json'
     )
 
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     console.log('[SHOPIFY TEST] Test 3: Fetching first page of orders')
     const firstOrders = await makeShopifyRequest(
       tenant.shopifyDomain,
-      tenant.accessToken,
+      tenant.shopifyAccessToken!,
       'orders.json?limit=5&status=any'
     )
 

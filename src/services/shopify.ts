@@ -615,3 +615,58 @@ export class ShopifyService {
     }
   }
 }
+
+// Standalone function for making Shopify API requests (used in debug endpoints)
+export async function makeShopifyRequest(
+  shopDomain: string, 
+  accessToken: string, 
+  endpoint: string, 
+  params: Record<string, any> = {}
+) {
+  const apiVersion = process.env.SHOPIFY_API_VERSION || '2024-01'
+  const url = new URL(`https://${shopDomain}/admin/api/${apiVersion}/${endpoint}`)
+  
+  // Add query parameters
+  Object.keys(params).forEach(key => {
+    if (params[key] !== undefined && params[key] !== null) {
+      url.searchParams.append(key, params[key].toString())
+    }
+  })
+
+  console.log(`[SHOPIFY DEBUG] Making request to: ${endpoint}`, { params, shopDomain })
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 25000) // 25s timeout for Vercel
+
+  try {
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+        'User-Agent': 'ShopifyService/1.0'
+      },
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error(`[SHOPIFY DEBUG ERROR] ${response.status} ${response.statusText}:`, errorText)
+      throw new Error(`Shopify API error: ${response.status} ${response.statusText} - ${errorText}`)
+    }
+
+    const data = await response.json()
+    console.log(`[SHOPIFY DEBUG SUCCESS] ${endpoint} returned data`)
+    return data
+
+  } catch (error) {
+    clearTimeout(timeoutId)
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error('[SHOPIFY DEBUG TIMEOUT] Request timed out after 25 seconds')
+      throw new Error('Shopify API request timed out')
+    }
+    throw error
+  }
+}
