@@ -6,15 +6,28 @@ import { prisma } from '@/lib/db'
 // POST /api/sync - Manual sync trigger
 export async function POST(request: NextRequest) {
   try {
+    console.log('[SYNC API] Manual sync triggered')
+    console.log('[SYNC API] Environment check:', {
+      NODE_ENV: process.env.NODE_ENV,
+      VERCEL: process.env.VERCEL,
+      DATABASE_URL: process.env.DATABASE_URL ? '✓ Set' : '✗ Missing',
+      JWT_SECRET: process.env.JWT_SECRET ? '✓ Set' : '✗ Missing'
+    })
+    
+    const startTime = Date.now()
+    
     const user = await getAuthenticatedUser(request)
     if (!user) {
+      console.log('[SYNC API] Unauthorized request')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const body = await request.json()
     const { tenantId, types, force, historical } = body
+    console.log('[SYNC API] Request body:', { tenantId, types, force, historical })
 
     if (!tenantId) {
+      console.log('[SYNC API] Missing tenant ID')
       return NextResponse.json({ error: 'Tenant ID is required' }, { status: 400 })
     }
 
@@ -27,7 +40,26 @@ export async function POST(request: NextRequest) {
     })
 
     if (!tenant) {
+      console.log('[SYNC API] Tenant not found for user')
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+    }
+
+    console.log('[SYNC API] Found tenant:', { 
+      name: tenant.name, 
+      domain: tenant.shopifyDomain,
+      accessToken: tenant.accessToken ? '✓ Set' : '✗ Missing'
+    })
+
+    // Validate tenant credentials
+    if (!tenant.shopifyDomain || !tenant.accessToken) {
+      console.error('[SYNC API] Missing tenant credentials')
+      return NextResponse.json({ 
+        error: 'Tenant is missing required Shopify credentials',
+        details: {
+          domain: tenant.shopifyDomain ? '✓' : '✗',
+          accessToken: tenant.accessToken ? '✓' : '✗'
+        }
+      }, { status: 400 })
     }
 
     // If historical sync is requested, force a full sync
@@ -36,8 +68,13 @@ export async function POST(request: NextRequest) {
       force: force || historical || false
     }
 
+    console.log('[SYNC API] Starting sync with options:', syncOptions)
+
     // Trigger sync
     const results = await syncTenantById(tenantId, user.id, syncOptions)
+
+    const totalTime = Date.now() - startTime
+    console.log(`[SYNC API] Sync completed in ${totalTime}ms:`, results)
 
     return NextResponse.json({
       success: true,
@@ -52,9 +89,19 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Manual sync error:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Internal server error'
+    const errorStack = error instanceof Error ? error.stack : 'No stack trace'
+    
+    console.error('[SYNC API ERROR] Manual sync failed:', {
+      message: errorMessage,
+      stack: errorStack,
+      error: error
+    })
+    
     return NextResponse.json({
-      error: error instanceof Error ? error.message : 'Internal server error'
+      success: false,
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? errorStack : undefined
     }, { status: 500 })
   }
 }

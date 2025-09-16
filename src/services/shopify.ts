@@ -24,19 +24,26 @@ export class ShopifyService {
       }
     })
 
+    console.log(`[SHOPIFY API] Making request to: ${endpoint}`, { params, tenantId: this.tenantId })
+
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
         'X-Shopify-Access-Token': this.accessToken,
         'Content-Type': 'application/json',
       },
+      // Add timeout for Vercel
+      signal: AbortSignal.timeout(25000) // 25 seconds, well under Vercel's 30s limit
     })
 
     if (!response.ok) {
-      throw new Error(`Shopify API error: ${response.status} ${response.statusText}`)
+      const errorText = await response.text()
+      console.error(`[SHOPIFY API ERROR] ${response.status} ${response.statusText}:`, errorText)
+      throw new Error(`Shopify API error: ${response.status} ${response.statusText} - ${errorText}`)
     }
 
     const data = await response.json()
+    console.log(`[SHOPIFY API SUCCESS] ${endpoint} returned ${data.orders?.length || data.customers?.length || data.products?.length || 0} items`)
     return data
   }
 
@@ -129,7 +136,8 @@ export class ShopifyService {
 
   async syncOrders(limit = 250) {
     try {
-      console.log(`Starting order sync for tenant ${this.tenantId}`)
+      console.log(`[SYNC] Starting order sync for tenant ${this.tenantId}`)
+      const syncStartTime = Date.now()
       
       // Get the last sync time for orders
       const lastSync = await this.getLastSyncTime('orders')
@@ -142,33 +150,35 @@ export class ShopifyService {
       // For incremental sync, use last sync time
       if (lastSync) {
         params.updated_at_min = lastSync.toISOString()
-        console.log(`Incremental order sync since: ${lastSync.toISOString()}`)
+        console.log(`[SYNC] Incremental order sync since: ${lastSync.toISOString()}`)
       } else {
-        console.log('Full order sync - fetching ALL orders from store history')
+        console.log('[SYNC] Full order sync - fetching ALL orders from store history')
       }
       
       let allOrders = []
       let hasMorePages = true
       let pageInfo = null
+      let pageCount = 0
       
       // Fetch all pages using proper pagination
       while (hasMorePages && allOrders.length < 5000) { // Safety limit
         try {
+          pageCount++
           const pageParams = { ...params }
           if (pageInfo) {
             pageParams.page_info = pageInfo
           }
           
-          console.log(`Fetching orders page...`)
+          console.log(`[SYNC] Fetching orders page ${pageCount}...`)
           const data = await this.makeShopifyRequest('orders.json', pageParams)
           const orders = data.orders || []
           
           if (!orders || orders.length === 0) {
             hasMorePages = false
-            console.log('No more orders to fetch')
+            console.log('[SYNC] No more orders to fetch')
           } else {
             allOrders.push(...orders)
-            console.log(`Fetched ${orders.length} orders (Total: ${allOrders.length})`)
+            console.log(`[SYNC] Fetched ${orders.length} orders (Total: ${allOrders.length})`)
             
             // Check if we got a full page, if not, we're done
             if (orders.length < params.limit) {
@@ -181,12 +191,12 @@ export class ShopifyService {
             }
           }
         } catch (pageError) {
-          console.error(`Error fetching order page:`, pageError)
+          console.error(`[SYNC ERROR] Error fetching order page ${pageCount}:`, pageError)
           hasMorePages = false
         }
       }
       
-      console.log(`Total orders fetched: ${allOrders.length}`)
+      console.log(`[SYNC] Total orders fetched: ${allOrders.length}`)
       
       // Process all orders
       let processed = 0
@@ -197,20 +207,21 @@ export class ShopifyService {
           
           // Log progress every 50 orders
           if (processed % 50 === 0) {
-            console.log(`Processed ${processed}/${allOrders.length} orders`)
+            console.log(`[SYNC] Processed ${processed}/${allOrders.length} orders`)
           }
         } catch (error) {
-          console.error(`Error processing order ${order.id}:`, error)
+          console.error(`[SYNC ERROR] Error processing order ${order.id}:`, error)
         }
       }
       
       // Update last sync time
       await this.updateLastSyncTime('orders')
       
-      console.log(`Order sync completed: ${processed} orders processed`)
+      const totalTime = Date.now() - syncStartTime
+      console.log(`[SYNC COMPLETE] Order sync completed: ${processed} orders processed in ${totalTime}ms`)
       return processed
     } catch (error) {
-      console.error('Error syncing orders:', error)
+      console.error('[SYNC ERROR] Error syncing orders:', error)
       throw error
     }
   }
