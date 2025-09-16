@@ -69,9 +69,18 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('[SYNC API] Starting sync with options:', syncOptions)
+    console.log('[SYNC API] Environment info:', {
+      NODE_ENV: process.env.NODE_ENV,
+      VERCEL: process.env.VERCEL,
+      VERCEL_REGION: process.env.VERCEL_REGION,
+      DATABASE_URL_EXISTS: !!process.env.DATABASE_URL,
+      TIMESTAMP: new Date().toISOString()
+    })
 
     // Trigger sync
+    console.log('[SYNC API] About to call syncTenantById...')
     const results = await syncTenantById(tenantId, user.id, syncOptions)
+    console.log('[SYNC API] syncTenantById returned:', results)
 
     const totalTime = Date.now() - startTime
     console.log(`[SYNC API] Sync completed in ${totalTime}ms:`, results)

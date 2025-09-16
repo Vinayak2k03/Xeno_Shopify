@@ -123,13 +123,24 @@ async function syncTenant(tenant: any, options: SyncOptions = {}): Promise<SyncR
   const results: SyncResult[] = []
   const startTime = Date.now()
   
+  console.log('[SCHEDULER] Starting syncTenant for:', {
+    tenantId: tenant.id,
+    tenantName: tenant.name,
+    domain: tenant.shopifyDomain,
+    hasAccessToken: !!tenant.shopifyAccessToken,
+    options,
+    environment: process.env.NODE_ENV,
+    vercel: process.env.VERCEL
+  })
+  
   try {
     // Check if sync is needed (unless forced)
     if (!options.force && !await shouldSync(tenant.id, options.types || ['orders', 'customers', 'products'])) {
-      console.log(`Skipping sync for tenant ${tenant.name} - recent sync exists`)
+      console.log(`[SCHEDULER] Skipping sync for tenant ${tenant.name} - recent sync exists`)
       return results
     }
     
+    console.log('[SCHEDULER] Creating ShopifyService instance...')
     const shopifyService = new ShopifyService({
       domain: tenant.shopifyDomain,
       accessToken: tenant.shopifyAccessToken,
@@ -138,42 +149,57 @@ async function syncTenant(tenant: any, options: SyncOptions = {}): Promise<SyncR
     }, tenant.id)
 
     const syncTypes = options.types || ['orders', 'customers', 'products']
+    console.log('[SCHEDULER] Will sync types:', syncTypes)
     
     // Execute syncs with retry logic
     for (const syncType of syncTypes) {
       const typeStartTime = Date.now()
       let recordsProcessed = 0
       
+      console.log(`[SCHEDULER] Starting ${syncType} sync (force: ${options.force})...`)
+      
       try {
         switch (syncType) {
           case 'orders':
             if (options.force) {
+              console.log('[SCHEDULER] Calling forceSyncOrders...')
               recordsProcessed = await retrySync(() => shopifyService.forceSyncOrders(100), 3)
             } else {
+              console.log('[SCHEDULER] Calling syncOrders...')
               recordsProcessed = await retrySync(() => shopifyService.syncOrders(100), 3)
             }
             break
           case 'customers':
             if (options.force) {
+              console.log('[SCHEDULER] Calling forceSyncCustomers...')
               recordsProcessed = await retrySync(() => shopifyService.forceSyncCustomers(100), 3)
             } else {
+              console.log('[SCHEDULER] Calling syncCustomers...')
               recordsProcessed = await retrySync(() => shopifyService.syncCustomers(100), 3)
             }
             break
           case 'products':
             if (options.force) {
+              console.log('[SCHEDULER] Calling forceSyncProducts...')
               recordsProcessed = await retrySync(() => shopifyService.forceSyncProducts(100), 3)
             } else {
+              console.log('[SCHEDULER] Calling syncProducts...')
               recordsProcessed = await retrySync(() => shopifyService.syncProducts(100), 3)
             }
             break
           case 'analytics':
             // Custom analytics sync logic would go here
+            console.log('[SCHEDULER] Analytics sync - no operation')
             recordsProcessed = 0
             break
         }
         
         const duration = Date.now() - typeStartTime
+        console.log(`[SCHEDULER] ${syncType} sync completed:`, {
+          recordsProcessed,
+          duration: `${duration}ms`,
+          success: true
+        })
         
         results.push({
           success: true,
@@ -191,6 +217,13 @@ async function syncTenant(tenant: any, options: SyncOptions = {}): Promise<SyncR
       } catch (error) {
         const duration = Date.now() - typeStartTime
         const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        
+        console.error(`[SCHEDULER] ${syncType} sync failed:`, {
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : 'No stack',
+          duration: `${duration}ms`,
+          tenantId: tenant.id
+        })
         
         results.push({
           success: false,
@@ -213,8 +246,19 @@ async function syncTenant(tenant: any, options: SyncOptions = {}): Promise<SyncR
       }
     }
     
+    const totalDuration = Date.now() - startTime
+    console.log('[SCHEDULER] Tenant sync completed:', {
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      totalDuration: `${totalDuration}ms`,
+      totalResults: results.length,
+      successful: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      totalRecords: results.reduce((sum, r) => sum + r.recordsProcessed, 0)
+    })
+    
   } catch (error) {
-    console.error(`Error syncing tenant ${tenant.name}:`, error)
+    console.error(`[SCHEDULER] Error syncing tenant ${tenant.name}:`, error)
     throw error
   }
   
@@ -251,6 +295,13 @@ async function retrySync<T>(
 async function shouldSync(tenantId: string, types: string[]): Promise<boolean> {
   const minSyncInterval = 10 * 60 * 1000 // 10 minutes minimum between syncs
   
+  console.log('[SHOULD_SYNC] Checking if sync needed for:', {
+    tenantId,
+    types,
+    minSyncInterval: `${minSyncInterval}ms`,
+    currentTime: new Date().toISOString()
+  })
+  
   for (const type of types) {
     const lastSync = await prisma.syncLog.findFirst({
       where: {
@@ -263,11 +314,20 @@ async function shouldSync(tenantId: string, types: string[]): Promise<boolean> {
       }
     })
     
-    if (!lastSync || Date.now() - lastSync.createdAt.getTime() > minSyncInterval) {
+    const timeSinceLastSync = lastSync ? Date.now() - lastSync.createdAt.getTime() : Infinity
+    console.log(`[SHOULD_SYNC] ${type}:`, {
+      lastSync: lastSync?.createdAt?.toISOString() || 'never',
+      timeSinceLastSync: timeSinceLastSync === Infinity ? 'never' : `${timeSinceLastSync}ms`,
+      shouldSync: !lastSync || timeSinceLastSync > minSyncInterval
+    })
+    
+    if (!lastSync || timeSinceLastSync > minSyncInterval) {
+      console.log(`[SHOULD_SYNC] Sync needed for ${type}`)
       return true
     }
   }
   
+  console.log('[SHOULD_SYNC] No sync needed - all types synced recently')
   return false
 }
 
