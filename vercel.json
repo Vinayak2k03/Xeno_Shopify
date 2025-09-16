@@ -3,9 +3,15 @@
     "src/app/api/sync/route.ts": {
       "maxDuration": 300
     },
+    "src/app/api/debug/*/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/*/route.ts": {
       "maxDuration": 60
     }
   },
-  "crons": []
+  "crons": [],
+  "env": {
+    "DATABASE_POOL_TIMEOUT": "30000"
+  }
 }

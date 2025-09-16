@@ -77,10 +77,41 @@ export async function POST(request: NextRequest) {
       TIMESTAMP: new Date().toISOString()
     })
 
-    // Trigger sync
+    // Test database connection first
+    try {
+      console.log('[SYNC API] Testing database connection...')
+      await prisma.$connect()
+      const testQuery = await prisma.tenant.count()
+      console.log('[SYNC API] Database connection OK, tenant count:', testQuery)
+    } catch (dbError) {
+      console.error('[SYNC API] Database connection failed:', dbError)
+      return NextResponse.json({
+        success: false,
+        error: 'Database connection failed',
+        details: dbError instanceof Error ? dbError.message : 'Unknown database error'
+      }, { status: 500 })
+    }
+
+    // Trigger sync with comprehensive error handling
     console.log('[SYNC API] About to call syncTenantById...')
-    const results = await syncTenantById(tenantId, user.id, syncOptions)
-    console.log('[SYNC API] syncTenantById returned:', results)
+    let results: any
+    try {
+      const syncPromise = syncTenantById(tenantId, user.id, syncOptions)
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Sync timeout after 4 minutes')), 240000)
+      )
+      
+      results = await Promise.race([syncPromise, timeoutPromise])
+      console.log('[SYNC API] syncTenantById completed successfully:', results)
+    } catch (syncError) {
+      console.error('[SYNC API] syncTenantById failed:', syncError)
+      return NextResponse.json({
+        success: false,
+        error: 'Sync operation failed',
+        details: syncError instanceof Error ? syncError.message : 'Unknown sync error',
+        stack: process.env.NODE_ENV === 'development' ? (syncError as Error)?.stack : undefined
+      }, { status: 500 })
+    }
 
     const totalTime = Date.now() - startTime
     console.log(`[SYNC API] Sync completed in ${totalTime}ms:`, results)
@@ -90,10 +121,10 @@ export async function POST(request: NextRequest) {
       tenantId,
       tenantName: tenant.name,
       results,
-      totalRecords: results.reduce((sum, r) => sum + r.recordsProcessed, 0),
-      totalDuration: results.reduce((sum, r) => sum + r.duration, 0),
-      successful: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
+      totalRecords: Array.isArray(results) ? results.reduce((sum: number, r: any) => sum + r.recordsProcessed, 0) : 0,
+      totalDuration: Array.isArray(results) ? results.reduce((sum: number, r: any) => sum + r.duration, 0) : 0,
+      successful: Array.isArray(results) ? results.filter((r: any) => r.success).length : 0,
+      failed: Array.isArray(results) ? results.filter((r: any) => !r.success).length : 0,
       syncType: historical ? 'historical' : force ? 'force' : 'incremental'
     })
 

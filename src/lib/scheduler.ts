@@ -130,10 +130,17 @@ async function syncTenant(tenant: any, options: SyncOptions = {}): Promise<SyncR
     hasAccessToken: !!tenant.shopifyAccessToken,
     options,
     environment: process.env.NODE_ENV,
-    vercel: process.env.VERCEL
+    vercel: !!process.env.VERCEL
   })
   
   try {
+    // Validate tenant configuration
+    if (!tenant.shopifyDomain || !tenant.shopifyAccessToken) {
+      const error = 'Tenant missing required Shopify configuration'
+      console.error('[SCHEDULER] Validation failed:', error)
+      throw new Error(error)
+    }
+
     // Check if sync is needed (unless forced)
     if (!options.force && !await shouldSync(tenant.id, options.types || ['orders', 'customers', 'products'])) {
       console.log(`[SCHEDULER] Skipping sync for tenant ${tenant.name} - recent sync exists`)
